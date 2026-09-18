@@ -9,7 +9,8 @@ const makeProvider = (
   fs: FileSystem.FileSystem
 ): Provider.Provider => ({
   ...makeCloudflareControl(cloudflare),
-  deploy: (appId, artifact) => deployToPagesProject(cloudflare, fs, appId, artifact)
+  deploy: (appId, artifact, options) =>
+    deployToPagesProject(cloudflare, fs, appId, artifact, options)
 })
 
 /**

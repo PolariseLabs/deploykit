@@ -52,10 +52,18 @@ export const deployToPagesProject = (
   cloudflare: CloudflareClient,
   fs: FileSystem.FileSystem,
   projectName: string,
-  artifact: Artifact.Artifact
+  artifact: Artifact.Artifact,
+  options: Provider.DeployOptions = {}
 ): Effect.Effect<Provider.Deployment, Provider.ProviderError> =>
   Effect.gen(function* () {
     const entries = Artifact.list(artifact)
+
+    const report = (event: Provider.DeployProgress) =>
+      options.onProgress === undefined
+        ? Effect.void
+        : options.onProgress(event).pipe(Effect.catchCause(() => Effect.void))
+
+    yield* report({ _tag: "Hashing", done: 0, total: entries.length })
 
     /**
      * A deferred entry that already carries this provider's digest never gets
@@ -72,6 +80,8 @@ export const deployToPagesProject = (
             ),
       { concurrency: 8 }
     )
+
+    yield* report({ _tag: "Hashing", done: entries.length, total: entries.length })
 
     const jwt = yield* cloudflare.uploadToken(projectName)
 
@@ -106,7 +116,10 @@ export const deployToPagesProject = (
         { concurrency: 4 }
       )
 
+      const bytes = toUpload.reduce((total, file) => total + Artifact.sizeOf(file.entry), 0)
+      yield* report({ _tag: "Uploading", done: 0, total: toUpload.length, bytes })
       yield* cloudflare.uploadAssets(jwt, payload)
+      yield* report({ _tag: "Uploading", done: toUpload.length, total: toUpload.length, bytes })
       // Best effort: failing to warm the cache slows the next deploy, it does
       // not break this one, so it must not fail the publish.
       yield* cloudflare
@@ -116,7 +129,14 @@ export const deployToPagesProject = (
 
     const manifest = Object.fromEntries(hashed.map(file => [`/${file.entry.path}`, file.hash]))
 
+    /**
+     * Pages has no equivalent of Vercel's target, meta or deployment resume.
+     * A deployment belongs to a branch, and there is no way to attach
+     * arbitrary metadata or to continue one that was already started. Ignored
+     * rather than faked: a caller reads capabilities, not guesses.
+     */
     const deployment = yield* cloudflare.createDeployment(projectName, manifest)
+    yield* report({ _tag: "Created", deploymentId: deployment.id })
     return toDeployment(deployment, projectName)
   }).pipe(
     Effect.catchTags({

@@ -55,17 +55,20 @@ export const uploadFile = (vercel: VercelClient, fs: FileSystem.FileSystem, entr
     return { file: entry.path, sha, size }
   })
 
-/** What a caller can vary about one deployment. */
-export interface DeployRequestOptions {
-  /** Defaults to production, as a publish normally means the live slot. */
-  readonly target?: "production" | "preview"
-  /** Carried through to Vercel, for linking a deployment back to a release. */
-  readonly meta?: Readonly<Record<string, string>>
-  /** Continues an existing deployment rather than starting a new one. */
-  readonly deploymentId?: string
+/** Vercel's own extras, on top of the portable options. */
+export interface DeployRequestOptions extends Provider.DeployOptions {
   /** How many times to answer a missing-bytes rejection. Defaults to 3. */
   readonly uploadRounds?: number
 }
+
+/** Progress reporting must never be the reason a deploy fails. */
+const report = (
+  options: DeployRequestOptions,
+  event: Provider.DeployProgress
+): Effect.Effect<void> =>
+  options.onProgress === undefined
+    ? Effect.void
+    : options.onProgress(event).pipe(Effect.catchCause(() => Effect.void))
 
 export const deployToVercelProject = (
   vercel: VercelClient,
@@ -86,9 +89,11 @@ export const deployToVercelProject = (
      * answers a manifest it cannot resolve with the list of SHAs it is
      * missing, which is a far better question to ask than "what changed".
      */
+    yield* report(options, { _tag: "Hashing", done: 0, total: entries.length })
     const files = yield* Effect.forEach(entries, entry => manifestEntry(fs, entry), {
       concurrency: 8
     })
+    yield* report(options, { _tag: "Hashing", done: entries.length, total: entries.length })
 
     const bySha = new Map(files.map((file, index) => [file.sha, entries[index]!]))
 
@@ -102,9 +107,12 @@ export const deployToVercelProject = (
           files,
           target: options.target ?? "production",
           ...(options.meta !== undefined ? { meta: options.meta } : {}),
-          ...(options.deploymentId !== undefined ? { deploymentId: options.deploymentId } : {})
+          ...(options.resume !== undefined ? { deploymentId: options.resume } : {})
         })
         .pipe(
+          Effect.tap(deployment =>
+            report(options, { _tag: "Created", deploymentId: String(deployment.id) })
+          ),
           Effect.map(deployment => toDeployment(deployment, appId)),
           Effect.catchTag("VercelApiError", error => {
             // No list at all with a digest complaint means Vercel holds none of
@@ -116,6 +124,12 @@ export const deployToVercelProject = (
             if (missing === undefined || round >= (options.uploadRounds ?? 3)) {
               return Effect.fail(toProviderError(error, { appId }))
             }
+            if (error.statusCode === 429) {
+              void report(options, {
+                _tag: "Throttled",
+                ...(error.retryAfterMs !== undefined ? { retryAfterMs: error.retryAfterMs } : {})
+              })
+            }
 
             // Distinct shas only: the same bytes at two paths upload once.
             const wanted = [...new Set(missing)].flatMap(sha => {
@@ -123,9 +137,28 @@ export const deployToVercelProject = (
               return entry === undefined ? [] : [entry]
             })
 
-            return Effect.forEach(wanted, entry => uploadFile(vercel, fs, entry), {
-              concurrency: 8
-            }).pipe(Effect.andThen(attempt(round + 1)))
+            const bytes = wanted.reduce((total, entry) => total + Artifact.sizeOf(entry), 0)
+            return report(options, {
+              _tag: "Uploading",
+              done: 0,
+              total: wanted.length,
+              bytes
+            }).pipe(
+              Effect.andThen(
+                Effect.forEach(wanted, entry => uploadFile(vercel, fs, entry), {
+                  concurrency: 8
+                })
+              ),
+              Effect.andThen(
+                report(options, {
+                  _tag: "Uploading",
+                  done: wanted.length,
+                  total: wanted.length,
+                  bytes
+                })
+              ),
+              Effect.andThen(attempt(round + 1))
+            )
           })
         )
 

@@ -381,13 +381,13 @@ describe("the deployment request", () => {
     }).pipe(Effect.provide(NodeFileSystem.layer))
   )
 
-  it.effect("continues an existing deployment when one is given", () =>
+  it.effect("resumes an existing deployment when one is given", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem
       const stub = stubClient()
 
       yield* deployToVercelProject(stub.client, fs, "prj_1", Artifact.empty, {
-        deploymentId: "dpl_earlier"
+        resume: "dpl_earlier"
       })
 
       assert.strictEqual(stub.deployRequests[0]?.deploymentId, "dpl_earlier")
@@ -472,6 +472,97 @@ describe("digests are provider-keyed", () => {
 
       assert.strictEqual(reads, 1, "read, because no sha1 was on offer")
       assert.strictEqual(stub.deployRequests[0]?.files[0]?.sha, HI_SHA)
+    }).pipe(Effect.provide(NodeFileSystem.layer))
+  )
+})
+
+describe("what a caller can control and see", () => {
+  const collect = () => {
+    const events: Array<Provider.DeployProgress> = []
+    return {
+      events,
+      onProgress: (event: Provider.DeployProgress) => Effect.sync(() => void events.push(event))
+    }
+  }
+
+  /**
+   * the consumer needs all three of these and none were reachable through the
+   * portable contract until now: the adapter supported them, Provider.deploy
+   * took only an artifact.
+   */
+  it.effect("carries target, meta and resume from the portable options", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem
+      const stub = stubClient()
+
+      yield* deployToVercelProject(stub.client, fs, "prj_1", Artifact.empty, {
+        target: "preview",
+        meta: { releaseId: "rel_7" },
+        resume: "dpl_earlier"
+      })
+
+      const request = stub.deployRequests[0]!
+      assert.strictEqual(request.target, "preview")
+      assert.deepStrictEqual(request.meta, { releaseId: "rel_7" })
+      assert.strictEqual(request.deploymentId, "dpl_earlier")
+    }).pipe(Effect.provide(NodeFileSystem.layer))
+  )
+
+  it.effect("reports hashing and the deployment id", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem
+      const stub = stubClient()
+      const { events, onProgress } = collect()
+
+      yield* deployToVercelProject(
+        stub.client,
+        fs,
+        "prj_1",
+        yield* Artifact.make([yield* Entry.text("a.txt", "hi")]),
+        { onProgress }
+      )
+
+      const tags = events.map(event => event._tag)
+      assert.include(tags, "Hashing")
+      assert.include(tags, "Created")
+      const created = events.find(event => event._tag === "Created")
+      assert.strictEqual(created?._tag === "Created" ? created.deploymentId : "", "dpl_1")
+    }).pipe(Effect.provide(NodeFileSystem.layer))
+  )
+
+  it.effect("reports uploading with a count and a byte total", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem
+      const stub = stubClient({ digestComplaintOnFirstDeploy: true })
+      const { events, onProgress } = collect()
+
+      yield* deployToVercelProject(
+        stub.client,
+        fs,
+        "prj_1",
+        yield* Artifact.make([yield* Entry.text("a.txt", "hi")]),
+        { onProgress }
+      )
+
+      const uploading = events.filter(event => event._tag === "Uploading")
+      assert.isAbove(uploading.length, 0)
+      const last = uploading.at(-1)!
+      assert.strictEqual(last._tag === "Uploading" ? last.total : 0, 1)
+      assert.strictEqual(last._tag === "Uploading" ? last.bytes : 0, 2)
+    }).pipe(Effect.provide(NodeFileSystem.layer))
+  )
+
+  /** A broken progress callback is the caller's problem, not the deploy's. */
+  it.effect("a failing onProgress does not fail the deploy", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem
+      const stub = stubClient()
+
+      const deployment = yield* deployToVercelProject(stub.client, fs, "prj_1", Artifact.empty, {
+        onProgress: () => Effect.die(new Error("reporting blew up"))
+      })
+
+      assert.strictEqual(deployment.id, "dpl_1")
     }).pipe(Effect.provide(NodeFileSystem.layer))
   )
 })

@@ -5,6 +5,7 @@ import {
   isTerminal,
   UnsupportedError,
   type Access,
+  type DeployOptions as ProviderDeployOptions,
   type App,
   type DeploymentStatus,
   type Deployment
@@ -43,7 +44,7 @@ export interface WaitOptions {
   readonly tolerateFailures?: number
 }
 
-export interface DeployOptions {
+export interface DeployOptions extends ProviderDeployOptions {
   readonly artifact: Artifact
 }
 export interface PlatformApi {
@@ -236,7 +237,10 @@ export const layer = Layer.effect(
           })
       },
 
-      deploy: (app: App, options: DeployOptions) => provider.deploy(app.id, options.artifact),
+      deploy: (app: App, options: DeployOptions) => {
+        const { artifact, ...rest } = options
+        return provider.deploy(app.id, artifact, rest)
+      },
 
       deployments: {
         get: (appId: string, deploymentId: string) => provider.getDeployment(appId, deploymentId),

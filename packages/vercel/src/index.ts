@@ -61,7 +61,7 @@ const makeProvider = (vercel: VercelClient, fs: FileSystem.FileSystem): Provider
   findAppByName: name => findVercelProjectByName(vercel, name),
   setAccess: (id, access) => setVercelProjectAccess(vercel, id, access),
   accessModes: new Set<Provider.AccessMode>(["public", "password", "sso"]),
-  deploy: (appId, artifact) => deployToVercelProject(vercel, fs, appId, artifact),
+  deploy: (appId, artifact, options) => deployToVercelProject(vercel, fs, appId, artifact, options),
   getDeployment: (appId, id) => getDeployment(vercel, appId, id)
 })
 

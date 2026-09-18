@@ -163,10 +163,62 @@ export interface ControlPlane {
   ) => Effect.Effect<Deployment, ProviderError>
 }
 
+/**
+ * What a deploy reports while it runs.
+ *
+ * A publish of a thousand files takes minutes, and a caller showing a user
+ * what is happening needs more than "it finished". Throttling in particular
+ * is worth surfacing: it looks identical to being stuck.
+ *
+ * The callback returns an Effect so a caller can log, write a progress row or
+ * push an event without leaving the runtime.
+ */
+export type DeployProgress =
+  | { readonly _tag: "Hashing"; readonly done: number; readonly total: number }
+  | {
+      readonly _tag: "Uploading"
+      readonly done: number
+      readonly total: number
+      readonly bytes: number
+    }
+  | { readonly _tag: "Throttled"; readonly retryAfterMs?: number }
+  | { readonly _tag: "Created"; readonly deploymentId: string }
+
+export interface DeployOptions {
+  /**
+   * Which slot to publish to. A provider with no such notion ignores it, and
+   * says so in its documentation rather than failing.
+   */
+  readonly target?: "production" | "preview"
+
+  /**
+   * Metadata carried to the provider, for linking a deployment back to
+   * whatever caused it. the consumer uses this to find the release a deployment
+   * belongs to when something goes wrong days later.
+   */
+  readonly meta?: Readonly<Record<string, string>>
+
+  /**
+   * Continue a deployment that was already started.
+   *
+   * The response to a create can be lost while the deployment itself
+   * succeeds: a worker is killed, a gateway times out. Without this the only
+   * recovery is to deploy again and leave the first one orphaned.
+   */
+  readonly resume?: string
+
+  /** Called as the deploy progresses. Failures here must not fail the deploy. */
+  readonly onProgress?: (event: DeployProgress) => Effect.Effect<void>
+}
+
 /** The control plane plus the one operation that moves bytes. */
 export interface Provider extends ControlPlane {
   /** Put an artifact into an app. */
-  readonly deploy: (appId: string, artifact: Artifact) => Effect.Effect<Deployment, ProviderError>
+  readonly deploy: (
+    appId: string,
+    artifact: Artifact,
+    options?: DeployOptions
+  ) => Effect.Effect<Deployment, ProviderError>
 }
 
 export class DeploymentProvider extends Context.Service<DeploymentProvider, Provider>()(
