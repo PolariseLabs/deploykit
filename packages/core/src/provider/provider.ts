@@ -1,8 +1,8 @@
 /** The adapter contract. Declared here, implemented by @deploykit/vercel and @deploykit/test. */
 
-import type { Effect, Option } from "effect"
+import type { Option } from "effect"
 import type { AccessMode } from "./capabilities.js"
-import { Context, Schema } from "effect"
+import { Context, Effect, Layer, Schema } from "effect"
 
 import type { ProviderError } from "./errors.js"
 import type { Artifact } from "../artifact/index.js"
@@ -80,7 +80,20 @@ export class Deployment extends Schema.Class<Deployment>("Deployment")({
   reason: Schema.optional(Schema.String)
 }) {}
 
-export interface Provider {
+/**
+ * Everything a provider can do that does not move bytes.
+ *
+ * Split out because where these run is not where `deploy` can run. Creating a
+ * project, resolving one, setting access and polling a deployment are small
+ * HTTP calls; deploying is a whole tree of files. Convex's V8 runtime gives a
+ * function 64 MiB and thirty minutes, which is generous for the former and
+ * nowhere near enough for the latter, where the consumer has seen 898 MB trees.
+ *
+ * So a caller that only needs the control plane depends on this and never
+ * pulls a byte-mover, a hasher or a filesystem into its bundle. That matters
+ * against a 32 MiB deployment-wide code limit.
+ */
+export interface ControlPlane {
   readonly name: string
 
   /** Create an isolated app for one tenant. */
@@ -113,9 +126,6 @@ export interface Provider {
   /** Which modes `setAccess` accepts. Absent when `setAccess` is. */
   readonly accessModes?: ReadonlySet<AccessMode>
 
-  /** Put an artifact into an app.  */
-  readonly deploy: (appId: string, artifact: Artifact) => Effect.Effect<Deployment, ProviderError>
-
   /**
    * Remove an app. Needed to compensate a half-finished create, and for tenant
    * offboarding. Adapters may assume the app exists; callers that are not sure
@@ -127,6 +137,32 @@ export interface Provider {
   readonly getDeployment: (deploymentId: string) => Effect.Effect<Deployment, ProviderError>
 }
 
+/** The control plane plus the one operation that moves bytes. */
+export interface Provider extends ControlPlane {
+  /** Put an artifact into an app. */
+  readonly deploy: (appId: string, artifact: Artifact) => Effect.Effect<Deployment, ProviderError>
+}
+
 export class DeploymentProvider extends Context.Service<DeploymentProvider, Provider>()(
   "@deploykit/DeploymentProvider"
 ) {}
+
+/**
+ * The control plane on its own, for a caller that cannot or should not deploy.
+ *
+ * A Provider satisfies this structurally, so an adapter needs nothing extra:
+ * `Provider.controlLayer` derives it. Depend on this in a runtime that only
+ * reads and polls.
+ */
+export class DeploymentControl extends Context.Service<DeploymentControl, ControlPlane>()(
+  "@deploykit/DeploymentControl"
+) {}
+
+/** Every full provider is also a control plane. */
+export const controlLayer = Layer.effect(
+  DeploymentControl,
+  Effect.gen(function* () {
+    const provider = yield* DeploymentProvider
+    return provider
+  })
+)

@@ -3,6 +3,7 @@ import {
   appId,
   DeploymentProvider,
   isTerminal,
+  type Access,
   type App,
   type DeploymentStatus,
   type Deployment
@@ -18,6 +19,12 @@ export interface GetOrCreateOptions {
   readonly externalId: string
   readonly name: string
 }
+export interface DeleteAppOptions {
+  /** The tenant whose mapping should be forgotten along with the app. */
+  readonly externalId: string
+  readonly appId: string
+}
+
 export interface WaitOptions {
   /** How often to ask, and for how long. Must be bounded. */
   readonly schedule?: Schedule.Schedule<unknown>
@@ -46,6 +53,28 @@ export interface PlatformApi {
     readonly getOrCreate: (
       options: GetOrCreateOptions
     ) => Effect.Effect<App, ProviderError | AppStoreError>
+
+    /** Resolve an app deploykit already knows about. */
+    readonly get: (id: string) => Effect.Effect<App, ProviderError>
+
+    /**
+     * Remove a tenant's app.
+     *
+     * The mapping goes too, or the next getOrCreate resolves an id the
+     * provider no longer has. Offboarding is the ordinary reason a SaaS
+     * deletes an app, so it belongs here rather than only on the adapter.
+     */
+    readonly delete: (
+      options: DeleteAppOptions
+    ) => Effect.Effect<void, ProviderError | AppStoreError>
+
+    /**
+     * Restrict who may open this app's deployments.
+     *
+     * Absent when the provider has no access model; `capabilities.accessModes`
+     * says which modes it accepts.
+     */
+    readonly setAccess?: (id: string, access: Access) => Effect.Effect<void, ProviderError>
   }
 
   readonly deploy: (app: App, options: DeployOptions) => Effect.Effect<Deployment, ProviderError>
@@ -102,6 +131,23 @@ export const layer = Layer.effect(
       capabilities: capabilitiesOf(provider),
 
       apps: {
+        get: (id: string) => provider.getApp(id),
+
+        /**
+         * Provider first, then the store. If the provider fails the mapping
+         * stays, which is recoverable: the next call resolves the app again.
+         * Forgetting first would strand an app nothing points at.
+         */
+        delete: (options: DeleteAppOptions) =>
+          Effect.gen(function* () {
+            yield* provider.deleteApp(options.appId)
+            yield* store.forget(options.externalId)
+          }),
+
+        ...(provider.setAccess === undefined
+          ? {}
+          : { setAccess: provider.setAccess.bind(provider) }),
+
         getOrCreate: (options: GetOrCreateOptions) =>
           Effect.gen(function* () {
             const storedId = yield* store.get(options.externalId)

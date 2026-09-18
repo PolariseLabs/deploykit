@@ -22,6 +22,14 @@ export interface AppStore {
    * this for one key, so the contract asks for it rather than pretending.
    */
   readonly put: (externalId: string, appId: AppId) => Effect.Effect<PutOutcome, AppStoreError>
+
+  /**
+   * Drop a tenant's mapping, when its app has been deleted.
+   *
+   * Forgetting one that is not there is not an error: offboarding is often
+   * retried, and the second attempt should be quiet.
+   */
+  readonly forget: (externalId: string) => Effect.Effect<void, AppStoreError>
 }
 
 export class TenantAppStore extends Context.Service<TenantAppStore, AppStore>()(

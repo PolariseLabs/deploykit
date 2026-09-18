@@ -111,8 +111,15 @@ export const makeAppStore = (config: MemoryAppStoreConfig = {}): Effect.Effect<M
         })
       })
 
+    const forget = (externalId: string) =>
+      Ref.update(state, mapping => {
+        const remaining = new Map(mapping)
+        remaining.delete(externalId)
+        return remaining
+      })
+
     return {
-      store: { get, put },
+      store: { get, put, forget },
       snapshot: Ref.get(state)
     }
   })

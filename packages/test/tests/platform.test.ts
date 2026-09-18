@@ -1,5 +1,5 @@
 import { assert, describe, it } from "@effect/vitest"
-import { Cause, Effect, Exit, Layer, Schedule } from "effect"
+import { Cause, Effect, Exit, Layer, Option, Schedule } from "effect"
 import { Artifact, Entry, Platform, Provider } from "@deploykit/core"
 import * as TestProvider from "../src/testProvider.ts"
 import * as MemoryAppStore from "../src/memoryAppStore.ts"
@@ -580,5 +580,76 @@ describe("polling through failures", () => {
         assert.strictEqual(error.lastStatus, "pending")
       }
     }).pipe(Effect.provide(live({ neverFinish: ["app-1"] })))
+  )
+})
+
+describe("offboarding", () => {
+  it.effect("removes the app and forgets the mapping", () =>
+    Effect.gen(function* () {
+      const platform = yield* Platform.Platform
+      const test = yield* TestProvider.TestProvider
+      const memory = yield* MemoryAppStore.MemoryAppStore
+      const app = yield* platform.apps.getOrCreate({ externalId: "c1", name: "c1" })
+
+      yield* platform.apps.delete({ externalId: "c1", appId: app.id })
+
+      assert.strictEqual((yield* test.snapshot).apps.size, 0, "the app is gone")
+      assert.strictEqual((yield* memory.snapshot).size, 0, "and so is the mapping")
+    }).pipe(Effect.provide(live()))
+  )
+
+  /**
+   * Order matters. Forgetting first would strand an app nothing points at;
+   * failing to delete while the mapping survives is recoverable, because the
+   * next call resolves the same app and can try again.
+   */
+  it.effect("keeps the mapping when the provider refuses to delete", () =>
+    Effect.gen(function* () {
+      const platform = yield* Platform.Platform
+      const memory = yield* MemoryAppStore.MemoryAppStore
+      const app = yield* platform.apps.getOrCreate({ externalId: "c1", name: "c1" })
+
+      const error = yield* Effect.flip(platform.apps.delete({ externalId: "c1", appId: app.id }))
+
+      assert.strictEqual(error._tag, "ProviderError")
+      assert.strictEqual(
+        (yield* memory.snapshot).get("c1"),
+        app.id,
+        "still pointing at it, so offboarding can be retried"
+      )
+    }).pipe(Effect.provide(live({ failOn: { deleteApp: ["app-1"] } })))
+  )
+
+  it.effect("a tenant deleted and recreated gets a fresh app", () =>
+    Effect.gen(function* () {
+      const platform = yield* Platform.Platform
+      const first = yield* platform.apps.getOrCreate({ externalId: "c1", name: "c1" })
+      yield* platform.apps.delete({ externalId: "c1", appId: first.id })
+
+      const second = yield* platform.apps.getOrCreate({ externalId: "c1", name: "c1" })
+
+      assert.notStrictEqual(second.id, first.id, "not the id of an app that is gone")
+    }).pipe(Effect.provide(live()))
+  )
+
+  it.effect("exposes the provider's access control through Platform", () =>
+    Effect.gen(function* () {
+      const platform = yield* Platform.Platform
+      const test = yield* TestProvider.TestProvider
+      const app = yield* platform.apps.getOrCreate({ externalId: "c1", name: "c1" })
+
+      assert.isDefined(platform.apps.setAccess)
+      yield* platform.apps.setAccess!(app.id, { _tag: "Public" })
+
+      const access = yield* test.accessFor(app.id)
+      assert.deepStrictEqual(Option.getOrNull(access), { _tag: "Public" })
+    }).pipe(Effect.provide(live()))
+  )
+
+  it.effect("omits setAccess when the provider has no access model", () =>
+    Effect.gen(function* () {
+      const platform = yield* Platform.Platform
+      assert.strictEqual(platform.apps.setAccess, undefined)
+    }).pipe(Effect.provide(live({ withoutAccessControl: true })))
   )
 })
