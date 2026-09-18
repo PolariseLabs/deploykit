@@ -1,6 +1,6 @@
 import { assert, describe, it } from "@effect/vitest"
 import { Effect } from "effect"
-import { normalise } from "../../src/artifact/path.ts"
+import { exact, normalise } from "../../src/artifact/path.ts"
 
 /**
  * `normalise` repairs what is cosmetic and rejects what is ambiguous.
@@ -158,4 +158,67 @@ describe("normalise", () => {
       )
     }
   })
+})
+
+describe("exact", () => {
+  /**
+   * The difference from normalise, stated as a test: these all succeed through
+   * normalise by being repaired, and that repair is what desynchronises a
+   * written file from the config pointing at it.
+   */
+  const repairedByNormalise = [
+    ["./assets/x.png", "a leading dot-slash"],
+    ["assets//x.png", "a doubled slash"],
+    ["assets/./x.png", "an interior dot segment"],
+    ["  assets/x.png", "leading whitespace"],
+    ["assets\\x.png", "a backslash"]
+  ] as const
+
+  for (const [input, why] of repairedByNormalise) {
+    it.effect(`rejects ${why}, which normalise would have fixed`, () =>
+      Effect.gen(function* () {
+        assert.isString(yield* normalise(input), "normalise repairs it")
+
+        const error = yield* Effect.flip(exact(input))
+
+        assert.strictEqual(error._tag, "InvalidArtifactPathError")
+        assert.match(error.reason, /not canonical/)
+        assert.match(error.reason, /would be written as/, "says what it would become")
+      })
+    )
+  }
+
+  it.effect("accepts a path that is already exactly right", () =>
+    Effect.gen(function* () {
+      assert.strictEqual(yield* exact("assets/x.png"), "assets/x.png")
+    })
+  )
+
+  it.effect("still rejects what normalise rejects", () =>
+    Effect.gen(function* () {
+      const error = yield* Effect.flip(exact("../escape.txt"))
+      assert.match(error.reason, /\.\./)
+    })
+  )
+
+  it.effect("can require a deploy root", () =>
+    Effect.gen(function* () {
+      const root = ".vercel/output"
+
+      assert.strictEqual(
+        yield* exact(".vercel/output/static/x.png", { root }),
+        ".vercel/output/static/x.png"
+      )
+
+      const error = yield* Effect.flip(exact("static/x.png", { root }))
+      assert.match(error.reason, /must sit under/)
+    })
+  )
+
+  it.effect("treats the root as a directory, so a prefix match is not enough", () =>
+    Effect.gen(function* () {
+      const error = yield* Effect.flip(exact(".vercel/outputs/x.png", { root: ".vercel/output" }))
+      assert.match(error.reason, /must sit under/)
+    })
+  )
 })
