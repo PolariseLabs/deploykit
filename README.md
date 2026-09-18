@@ -15,6 +15,41 @@ Pre-v0.1, and working. Vercel and Cloudflare Pages both deploy end to end,
 verified against real accounts: an artifact uploads, deploys, and serves
 content byte-identical to what was sent. The API will still move.
 
+## What is verified, and how
+
+Both adapters have deployed to a real account and served content byte-identical
+to what was sent: Vercel with a serverless function, Cloudflare Pages with a
+Function. The test suite is thorough and mutation-checked, and it could not have
+told you any of the following.
+
+Four bugs were reachable only by making a real call:
+
+- `@vercel/sdk` cannot express a prebuilt deployment at all. Every deploy was
+  being submitted as source for Vercel to build.
+- Its `uploadFile` misnames the digest header, so every upload fails with
+  `invalid_digest`. The adapter was calling exactly that method.
+- A team with deployment protection on by default makes every created project
+  unreachable by its intended audience.
+- Cloudflare reports its own internal failures as HTTP 200 with
+  `success: false`, so classifying retryability by status code never retried
+  them.
+
+And three things that were reasoned through, typechecked, tested and wrong:
+
+- `_worker.js` uploaded through the asset manifest deploys successfully and does
+  nothing. The route falls through to `index.html`, with no error anywhere.
+- `resume` was built on the assumption that naming a deployment continues it.
+  It creates a second one, so an option meant to prevent duplication caused it.
+  Removed.
+- A terminal deployment status does not mean the URL answers. Vercel serves
+  about 0.4s later, Cloudflare Pages about two minutes, and a fresh `pages.dev`
+  subdomain fails DNS and then TLS before it starts returning 404s.
+
+The lesson is not that the tests are bad. It is that a stub can only prove the
+code does what its author believed the provider wanted. `scripts/smoke.ts` does
+one real round trip against either provider and compares what is served against
+what was uploaded; it is worth running before trusting a change to an adapter.
+
 ## The idea
 
 ```
