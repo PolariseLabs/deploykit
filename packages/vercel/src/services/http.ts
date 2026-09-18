@@ -7,7 +7,7 @@
  */
 
 import { Effect, Option, Schema } from "effect"
-import { Provider } from "@deploykit/core"
+import * as Provider from "@deploykit/core/provider"
 import {
   VERCEL_API,
   VercelApiError,

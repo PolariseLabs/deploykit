@@ -15,7 +15,8 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "prepare": "effect-language-service patch",
-    "smoke": "bun scripts/smoke-vercel.ts"
+    "smoke": "bun scripts/smoke-vercel.ts",
+    "check:control": "bun scripts/check-control-bundle.ts"
   },
   "devDependencies": {
     "@deploykit/core": "workspace:*",

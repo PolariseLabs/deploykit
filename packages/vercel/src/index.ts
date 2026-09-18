@@ -7,7 +7,8 @@ import {
   getVercelProject,
   setVercelProjectAccess
 } from "./services/app.js"
-import { deployToVercelProject, getDeployment } from "./services/deployments.js"
+import { deployToVercelProject } from "./services/deployments.js"
+import { getDeployment } from "./services/status.js"
 import { makeVercelClient } from "./services/http.js"
 import type { VercelClient } from "./services/client.js"
 
@@ -76,3 +77,10 @@ export type {
   VercelReadyState
 } from "./services/client.js"
 export type { DeployRequestOptions } from "./services/deployments.js"
+
+export {
+  controlLayerWith,
+  makeVercelControl,
+  vercelClientFromConfig,
+  vercelControlLayer
+} from "./control.js"

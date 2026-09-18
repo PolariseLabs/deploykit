@@ -7,7 +7,7 @@
  * operator needs to know what went wrong, so they are carried across here once.
  */
 
-import { Provider } from "@deploykit/core"
+import * as Provider from "@deploykit/core/provider"
 import { VercelApiError } from "./client.js"
 
 export interface ErrorContext {

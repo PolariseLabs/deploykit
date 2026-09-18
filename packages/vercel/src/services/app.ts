@@ -1,5 +1,5 @@
 import { Effect, Option } from "effect"
-import { Provider } from "@deploykit/core"
+import * as Provider from "@deploykit/core/provider"
 import { toProviderError } from "./error.js"
 import type { VercelClient } from "./client.js"
 
