@@ -8,6 +8,7 @@ import {
   CloudflareApiError,
   type AssetUpload,
   type CloudflareClient,
+  type DeploymentExtras,
   type PagesDeployment,
   type PagesProject
 } from "../src/services/client.ts"
@@ -16,6 +17,8 @@ export interface StubClient {
   readonly client: CloudflareClient
   readonly uploads: ReadonlyArray<AssetUpload>
   readonly manifests: ReadonlyArray<Readonly<Record<string, string>>>
+  /** The non-asset parts of each deployment: worker bundle, routes, headers. */
+  readonly extras: ReadonlyArray<DeploymentExtras | undefined>
   readonly checked: ReadonlyArray<ReadonlyArray<string>>
   readonly upserted: ReadonlyArray<ReadonlyArray<string>>
   readonly calls: ReadonlyArray<string>
@@ -43,6 +46,7 @@ const defaultDeployment: PagesDeployment = {
 export const stubClient = (config: StubConfig = {}): StubClient => {
   const uploads: Array<AssetUpload> = []
   const manifests: Array<Readonly<Record<string, string>>> = []
+  const extras: Array<DeploymentExtras | undefined> = []
   const checked: Array<ReadonlyArray<string>> = []
   const upserted: Array<ReadonlyArray<string>> = []
   const calls: Array<string> = []
@@ -68,6 +72,7 @@ export const stubClient = (config: StubConfig = {}): StubClient => {
   return {
     uploads,
     manifests,
+    extras,
     checked,
     upserted,
     calls,
@@ -90,8 +95,9 @@ export const stubClient = (config: StubConfig = {}): StubClient => {
         calls.push("upsertHashes")
         return config.failUpsert === true ? Effect.fail(fail("upsertHashes")) : Effect.void
       },
-      createDeployment: (_name, manifest) => {
+      createDeployment: (_name, manifest, deploymentExtras) => {
         manifests.push(manifest)
+        extras.push(deploymentExtras)
         return guard("createDeployment", deployment)
       }
     }
