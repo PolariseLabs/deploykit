@@ -50,9 +50,56 @@ const buildOutput = (directory: string) =>
       Entry.file(`${STATIC_PREFIX}/${entry.path}`, `${directory}/${entry.path}`)
     )
 
-    const config = yield* Entry.text(".vercel/output/config.json", JSON.stringify({ version: 3 }))
+    /**
+     * A serverless function, because Meet deploys them and a static-only test
+     * proves nothing about them. Build Output API v3: a `.func` directory with
+     * a `.vc-config.json` naming the runtime and handler, and `config.json`
+     * routing to it. Same shape the consumer injects for its gatekeeper middleware.
+     */
+    const fn = ".vercel/output/functions/hello.func"
+    const functionFiles = [
+      yield* Entry.text(
+        `${fn}/.vc-config.json`,
+        JSON.stringify({ runtime: "nodejs20.x", handler: "index.js", launcherType: "Nodejs" })
+      ),
+      yield* Entry.text(
+        `${fn}/index.js`,
+        "module.exports = (req, res) => { res.setHeader('content-type','text/plain'); res.end('deploykit') }"
+      ),
+      yield* Entry.text(`${fn}/package.json`, JSON.stringify({ type: "commonjs" }))
+    ]
 
-    return yield* Artifact.make([config, ...staticFiles])
+    const config = yield* Entry.text(
+      ".vercel/output/config.json",
+      JSON.stringify({ version: 3, routes: [{ src: "/api/hello", dest: "/hello" }] })
+    )
+
+    /**
+     * Layers rather than one flat list, which is how a real publish is built:
+     * a prebuilt template underneath, generated files on top. The overrides it
+     * reports are the thing a flat merge throws away.
+     */
+    const layers = [
+      { name: "template", entries: staticFiles },
+      { name: "functions", entries: functionFiles },
+      { name: "generated", entries: [config] }
+    ]
+    const composed = Artifact.layered(layers)
+
+    for (const summary of Artifact.summarise(layers, composed)) {
+      yield* Effect.log(
+        `layer ${summary.name}: ${summary.contributed} files, ${summary.surviving} surviving`
+      )
+    }
+    for (const override of composed.overrides) {
+      yield* Effect.log(`override ${override.path}: ${override.replaced} -> ${override.winner}`)
+    }
+    const clashes = Artifact.collisionsWithinLayers(composed)
+    if (clashes.length > 0) {
+      yield* Effect.log(`WARNING ${clashes.length} collisions inside a single layer`)
+    }
+
+    return composed.artifact
   })
 
 /**
@@ -149,6 +196,26 @@ const verifyAsset = (url: string, assetPath: string) =>
     yield* Effect.log(`serving: ${assetPath} HTTP ${response.status}`)
   })
 
+/**
+ * A serverless function is a different code path on Vercel's side from a
+ * static file, so it needs its own evidence.
+ */
+const verifyFunction = (url: string) =>
+  Effect.gen(function* () {
+    const href = `${url}/api/hello`
+    const response = yield* Effect.promise(() => fetch(href, { redirect: "manual" }))
+    const body = yield* Effect.promise(() => response.text().catch(() => ""))
+
+    if (!response.ok || body.trim() !== "deploykit") {
+      return yield* new NotServing({
+        url: href,
+        status: response.status,
+        detail: `serverless function did not answer as expected: ${body.slice(0, 200)}`
+      })
+    }
+    yield* Effect.log(`serving: /api/hello HTTP ${response.status}, function answered`)
+  })
+
 const program = Effect.gen(function* () {
   const directory = process.argv[2]
   if (directory === undefined) {
@@ -169,7 +236,7 @@ const program = Effect.gen(function* () {
     .map(entry => entry.path)
     .filter(path => path.startsWith(`${STATIC_PREFIX}/`) && path.includes("/assets/"))
     .map(path => path.slice(STATIC_PREFIX.length + 1))[0]
-  const bytes = yield* Artifact.totalSize(artifact)
+  const bytes = Artifact.totalSize(artifact)
   yield* Effect.log(`artifact: ${Artifact.fileCount(artifact)} files, ${bytes} bytes`)
 
   const app = yield* provider.createApp(name)
@@ -210,6 +277,7 @@ const program = Effect.gen(function* () {
         if (settled.status === "deployed" && settled.url !== undefined) {
           yield* verifyServing(settled.url, expectedIndex)
           if (firstAsset !== undefined) yield* verifyAsset(settled.url, firstAsset)
+          yield* verifyFunction(settled.url)
         }
         return settled
       }),

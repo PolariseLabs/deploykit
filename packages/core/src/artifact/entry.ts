@@ -1,4 +1,4 @@
-import { Schema, Effect, Match } from "effect"
+import { Schema, Effect, FileSystem, Match } from "effect"
 import type { ArtifactPath } from "./path.js"
 import { normalise, ArtifactPathSchema } from "./path.js"
 
@@ -14,7 +14,15 @@ export class BytesEntry extends Schema.TaggedClass<BytesEntry>()("Bytes", {
 
 export class FileEntry extends Schema.TaggedClass<FileEntry>()("File", {
   path: ArtifactPathSchema,
-  source: Schema.String
+  source: Schema.String,
+  /**
+   * Size at the moment the entry was made.
+   *
+   * Carried rather than measured later so sizing a tree is free. The stat
+   * happens here, where the caller is already reaching for the filesystem,
+   * instead of making every measurement of every entry require one.
+   */
+  byteLength: Schema.Number
 }) {}
 
 /**
@@ -56,10 +64,26 @@ export const bytes = (path: string, content: Uint8Array) => {
   })
 }
 
+/** Reads the size now, so nothing has to read it again. */
 export const file = (path: string, source: string) => {
   return Effect.gen(function* () {
     const NormalPath = yield* normalise(path)
-    return new FileEntry({ path: NormalPath, source })
+    const fs = yield* FileSystem.FileSystem
+    const info = yield* fs.stat(source)
+    // info.size is a branded bigint; artifacts sit far below MAX_SAFE_INTEGER.
+    return new FileEntry({ path: NormalPath, source, byteLength: Number(info.size) })
+  })
+}
+
+/**
+ * The same, for a caller that has already stat-ed the file. Saves a second
+ * syscall per entry when walking a directory, which at a thousand files is
+ * the difference worth having.
+ */
+export const fileWithSize = (path: string, source: string, byteLength: number) => {
+  return Effect.gen(function* () {
+    const NormalPath = yield* normalise(path)
+    return new FileEntry({ path: NormalPath, source, byteLength })
   })
 }
 

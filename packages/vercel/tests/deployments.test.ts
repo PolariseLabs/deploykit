@@ -47,12 +47,22 @@ it.layer(NodeFileSystem.layer)("with a filesystem", it => {
       })
     )
 
-    it.effect("surfaces a missing file as a ProviderError, not a raw PlatformError", () =>
+    /**
+     * A source that existed at compose time and is gone by upload time. The
+     * entry is valid when built, so this is the genuine race rather than a
+     * path that was never there, and it must surface as a ProviderError
+     * rather than a raw PlatformError from the filesystem.
+     */
+    it.effect("surfaces a source that vanished as a ProviderError", () =>
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem
-        const stub = stubClient()
-        const entry = yield* Entry.file("gone.txt", "/does/not/exist.txt")
-        const artifact = yield* Artifact.make([entry])
+        const dir = yield* fs.makeTempDirectoryScoped()
+        yield* fs.writeFileString(`${dir}/here.txt`, "for now")
+
+        const stub = stubClient({ missingOnFirstDeploy: ["any"] })
+        const artifact = yield* Artifact.make([yield* Entry.file("here.txt", `${dir}/here.txt`)])
+
+        yield* fs.remove(`${dir}/here.txt`)
 
         const error = yield* Effect.flip(deployToVercelProject(stub.client, fs, "prj_1", artifact))
 

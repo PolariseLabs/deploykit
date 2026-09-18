@@ -30,7 +30,7 @@ suite("Entry constructors", () => {
 
   it.effect("file carries a source location rather than content", () =>
     Effect.gen(function* () {
-      const entry = yield* Entry.file("index.html", "/build/dist/index.html")
+      const entry = yield* Entry.fileWithSize("index.html", "/build/dist/index.html", 5)
       assert.strictEqual(entry._tag, "File")
       assert.strictEqual(entry.path, "index.html")
       assert.strictEqual(entry.source, "/build/dist/index.html")
@@ -40,7 +40,7 @@ suite("Entry constructors", () => {
 
   it.effect("the destination path and the source path are independent", () =>
     Effect.gen(function* () {
-      const entry = yield* Entry.file("./assets//app.js", "/tmp/x/../y/app.js")
+      const entry = yield* Entry.fileWithSize("./assets//app.js", "/tmp/x/../y/app.js", 1)
       assert.strictEqual(entry.path, "assets/app.js", "destination is normalised")
       assert.strictEqual(entry.source, "/tmp/x/../y/app.js", "source is left alone")
     })
@@ -52,7 +52,7 @@ suite("Entry path validation", () => {
     Effect.gen(function* () {
       const t = yield* Entry.text("./a//b.json", "{}")
       const b = yield* Entry.bytes("./a//b.png", new Uint8Array())
-      const f = yield* Entry.file("./a//b.html", "/src/b.html")
+      const f = yield* Entry.fileWithSize("./a//b.html", "/src/b.html", 1)
       assert.strictEqual(t.path, "a/b.json")
       assert.strictEqual(b.path, "a/b.png")
       assert.strictEqual(f.path, "a/b.html")
@@ -63,7 +63,7 @@ suite("Entry path validation", () => {
     Effect.gen(function* () {
       const t = yield* Effect.flip(Entry.text("../secret.env", "x"))
       const b = yield* Effect.flip(Entry.bytes("../secret.env", new Uint8Array()))
-      const f = yield* Effect.flip(Effect.asVoid(Entry.file("../secret.env", "/src/x")))
+      const f = yield* Effect.flip(Effect.asVoid(Entry.fileWithSize("../secret.env", "/src/x", 1)))
       for (const error of [t, b, f]) {
         assert.strictEqual(error._tag, "InvalidArtifactPathError")
         assert.strictEqual(error.reason, "path must not contain '..'")
@@ -84,7 +84,7 @@ suite("describe", () => {
     Effect.gen(function* () {
       const t = yield* Entry.text("config.json", "hello")
       const b = yield* Entry.bytes("logo.png", new Uint8Array([1, 2, 3]))
-      const f = yield* Entry.file("index.html", "/build/index.html")
+      const f = yield* Entry.fileWithSize("index.html", "/build/index.html", 5)
 
       assert.strictEqual(Entry.describe(t), "text config.json with 5 characters")
       assert.strictEqual(Entry.describe(b), "bytes logo.png with 3 bytes")
