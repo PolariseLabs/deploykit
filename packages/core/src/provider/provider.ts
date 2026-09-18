@@ -48,6 +48,21 @@ export const deploymentUrl = Schema.String.pipe(Schema.brand("DeploymentUrl"))
 export type DeploymentUrl = typeof deploymentUrl.Type
 export type AppId = typeof appId.Type
 /**
+ * A provider was asked for something it does not do.
+ *
+ * Distinct from a ProviderError on purpose: "this provider has no password
+ * protection" is not the same as "setting it failed", and a caller retries
+ * one and not the other. Capability gaps are part of the contract, so they
+ * get their own failure rather than being flattened into the generic one.
+ */
+export class UnsupportedError extends Schema.TaggedError<UnsupportedError>()("UnsupportedError", {
+  provider: Schema.String,
+  /** The operation or mode that is not available. */
+  capability: Schema.String,
+  message: Schema.String
+}) {}
+
+/**
  * Who may open a deployment. A closed union rather than a boolean, because
  * "not public" splits into meaningfully different things a caller chooses
  * between.
@@ -133,8 +148,19 @@ export interface ControlPlane {
    */
   readonly deleteApp: (id: string) => Effect.Effect<void, ProviderError>
 
-  /** Read one deployment back, for polling status and URL. */
-  readonly getDeployment: (deploymentId: string) => Effect.Effect<Deployment, ProviderError>
+  /**
+   * Read one deployment back, for polling status and URL.
+   *
+   * Takes the app as well as the deployment, because a deployment belongs to
+   * an app and not every provider makes one addressable on its own. Vercel
+   * does; Cloudflare Pages scopes deployments under a project and has no
+   * endpoint for an id alone. `Deployment` already carries `appId`, so this
+   * only makes the contract say what the domain already did.
+   */
+  readonly getDeployment: (
+    appId: string,
+    deploymentId: string
+  ) => Effect.Effect<Deployment, ProviderError>
 }
 
 /** The control plane plus the one operation that moves bytes. */

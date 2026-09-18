@@ -140,7 +140,7 @@ it.layer(NodeFileSystem.layer)("with a filesystem", it => {
         const artifact = yield* Artifact.make([
           yield* Entry.deferred("big.bin", {
             byteLength: 1024,
-            sha1: "deadbeef",
+            digests: { sha1: "deadbeef" },
             read: () => {
               reads += 1
               return Promise.resolve(new Uint8Array(1024))
@@ -164,7 +164,7 @@ it.layer(NodeFileSystem.layer)("with a filesystem", it => {
         const artifact = yield* Artifact.make([
           yield* Entry.deferred("big.bin", {
             byteLength: 3,
-            sha1: "deadbeef",
+            digests: { sha1: "deadbeef" },
             read: () => {
               reads += 1
               return Promise.resolve(new Uint8Array([1, 2, 3]))
@@ -296,7 +296,7 @@ describe("getDeployment", () => {
       Effect.gen(function* () {
         const stub = stubClient({ deployment: { id: "dpl_1", readyState } })
 
-        const deployment = yield* getDeployment(stub.client, "dpl_1")
+        const deployment = yield* getDeployment(stub.client, "prj_1", "dpl_1")
 
         assert.strictEqual(deployment.status, expected)
       })
@@ -307,7 +307,7 @@ describe("getDeployment", () => {
     Effect.gen(function* () {
       const stub = stubClient({ deployment: { id: "dpl_1", readyState: "QUEUED" } })
 
-      const deployment = yield* getDeployment(stub.client, "dpl_1")
+      const deployment = yield* getDeployment(stub.client, "prj_1", "dpl_1")
 
       assert.strictEqual(deployment.appId, "unknown")
     })
@@ -317,7 +317,7 @@ describe("getDeployment", () => {
     Effect.gen(function* () {
       const stub = stubClient({ failWithoutResponse: "not found" })
 
-      const error = yield* Effect.flip(getDeployment(stub.client, "dpl_missing"))
+      const error = yield* Effect.flip(getDeployment(stub.client, "prj_1", "dpl_missing"))
 
       assert.strictEqual(error.message, "not found")
       assert.strictEqual(error.deploymentId, "dpl_missing")
@@ -404,7 +404,7 @@ describe("error detail", () => {
         retryAfterSeconds: 12
       })
 
-      const error = yield* Effect.flip(getDeployment(stub.client, "dpl_1"))
+      const error = yield* Effect.flip(getDeployment(stub.client, "prj_1", "dpl_1"))
 
       assert.strictEqual(error.statusCode, 429)
       assert.match(error.body ?? "", /rate_limited/)
@@ -417,7 +417,7 @@ describe("error detail", () => {
     Effect.gen(function* () {
       const stub = stubClient({ failWithoutResponse: "fetch failed" })
 
-      const error = yield* Effect.flip(getDeployment(stub.client, "dpl_1"))
+      const error = yield* Effect.flip(getDeployment(stub.client, "prj_1", "dpl_1"))
 
       assert.strictEqual(error.statusCode, undefined)
       assert.strictEqual(error.message, "fetch failed")
@@ -443,4 +443,35 @@ describe("error detail", () => {
       assert.isFalse(Provider.isTransient(of(403)), "not allowed")
     }
   })
+})
+
+describe("digests are provider-keyed", () => {
+  /**
+   * Cloudflare Pages hashes sha256 over base64 content plus the extension, so
+   * a digest stored for one provider means nothing to another. An adapter
+   * that finds no key it recognises reads and hashes as usual rather than
+   * trusting a hash computed for someone else.
+   */
+  it.effect("ignores a digest computed for a different provider", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem
+      const stub = stubClient()
+      let reads = 0
+      const artifact = yield* Artifact.make([
+        yield* Entry.deferred("big.bin", {
+          byteLength: 2,
+          digests: { "sha256-b64ext": "not-a-vercel-digest" },
+          read: () => {
+            reads += 1
+            return Promise.resolve(new TextEncoder().encode("hi"))
+          }
+        })
+      ])
+
+      yield* deployToVercelProject(stub.client, fs, "prj_1", artifact)
+
+      assert.strictEqual(reads, 1, "read, because no sha1 was on offer")
+      assert.strictEqual(stub.deployRequests[0]?.files[0]?.sha, HI_SHA)
+    }).pipe(Effect.provide(NodeFileSystem.layer))
+  )
 })

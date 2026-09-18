@@ -263,7 +263,7 @@ const program = Effect.gen(function* () {
         const started = yield* provider.deploy(app.id, artifact)
         yield* Effect.log(`deployment ${started.id} is ${started.status}`)
 
-        const settled = yield* provider.getDeployment(started.id).pipe(
+        const settled = yield* provider.getDeployment(app.id, started.id).pipe(
           Effect.tap(d => Effect.log(`  ${d.status}${d.url === undefined ? "" : ` ${d.url}`}`)),
           Effect.repeat({
             until: d => Provider.isTerminal(d.status),

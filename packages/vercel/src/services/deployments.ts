@@ -30,9 +30,16 @@ export const bytesOf = (fs: FileSystem.FileSystem, entry: Entry.Entry) =>
  * tree is unchanged and Vercel already holds those bytes. Everything else has
  * to be read and hashed.
  */
+/** The digest Vercel addresses uploads by: hex sha1 of the raw bytes. */
+const VERCEL_DIGEST = "sha1"
+
 const manifestEntry = (fs: FileSystem.FileSystem, entry: Entry.Entry) =>
-  entry._tag === "Deferred" && entry.sha1 !== undefined
-    ? Effect.succeed({ file: entry.path, sha: entry.sha1, size: entry.byteLength })
+  entry._tag === "Deferred" && entry.digests?.[VERCEL_DIGEST] !== undefined
+    ? Effect.succeed({
+        file: entry.path,
+        sha: entry.digests[VERCEL_DIGEST],
+        size: entry.byteLength
+      })
     : bytesOf(fs, entry).pipe(
         Effect.map(bytes => {
           const { sha, size } = digest(bytes)

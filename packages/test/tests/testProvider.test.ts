@@ -167,9 +167,9 @@ describe("getDeployment", () => {
       const app = yield* provider.createApp("alpha")
       const deployment = yield* provider.deploy(app.id, yield* artifactOf(yield* indexHtml))
 
-      const first = yield* provider.getDeployment(deployment.id)
-      const second = yield* provider.getDeployment(deployment.id)
-      const third = yield* provider.getDeployment(deployment.id)
+      const first = yield* provider.getDeployment(app.id, deployment.id)
+      const second = yield* provider.getDeployment(app.id, deployment.id)
+      const third = yield* provider.getDeployment(app.id, deployment.id)
 
       assert.strictEqual(first.status, "pending")
       assert.strictEqual(second.status, "deploying")
@@ -183,9 +183,9 @@ describe("getDeployment", () => {
       const app = yield* provider.createApp("alpha")
       const deployment = yield* provider.deploy(app.id, Artifact.empty)
 
-      yield* provider.getDeployment(deployment.id)
-      const deploying = yield* provider.getDeployment(deployment.id)
-      const deployed = yield* provider.getDeployment(deployment.id)
+      yield* provider.getDeployment(app.id, deployment.id)
+      const deploying = yield* provider.getDeployment(app.id, deployment.id)
+      const deployed = yield* provider.getDeployment(app.id, deployment.id)
 
       assert.strictEqual(deploying.url, undefined)
       assert.strictEqual(deployed.url, "https://deployment-1.test.deploykit.dev")
@@ -198,9 +198,9 @@ describe("getDeployment", () => {
       const app = yield* provider.createApp("alpha")
       const deployment = yield* provider.deploy(app.id, Artifact.empty)
 
-      yield* provider.getDeployment(deployment.id)
-      yield* provider.getDeployment(deployment.id)
-      const settled = yield* provider.getDeployment(deployment.id)
+      yield* provider.getDeployment(app.id, deployment.id)
+      yield* provider.getDeployment(app.id, deployment.id)
+      const settled = yield* provider.getDeployment(app.id, deployment.id)
 
       assert.strictEqual(settled.status, "failed")
       assert.strictEqual(settled.url, undefined)
@@ -213,9 +213,9 @@ describe("getDeployment", () => {
       const app = yield* provider.createApp("alpha")
       const deployment = yield* provider.deploy(app.id, Artifact.empty)
 
-      yield* Effect.forEach([1, 2, 3], () => provider.getDeployment(deployment.id))
-      const settled = yield* provider.getDeployment(deployment.id)
-      const stillSettled = yield* provider.getDeployment(deployment.id)
+      yield* Effect.forEach([1, 2, 3], () => provider.getDeployment(app.id, deployment.id))
+      const settled = yield* provider.getDeployment(app.id, deployment.id)
+      const stillSettled = yield* provider.getDeployment(app.id, deployment.id)
 
       assert.strictEqual(settled.status, "deployed")
       assert.strictEqual(stillSettled.status, "deployed")
@@ -226,7 +226,7 @@ describe("getDeployment", () => {
     Effect.gen(function* () {
       const { provider } = yield* TestProvider.make()
 
-      const error = yield* Effect.flip(provider.getDeployment("deployment-99"))
+      const error = yield* Effect.flip(provider.getDeployment("app-1", "deployment-99"))
 
       assert.strictEqual(error.deploymentId, "deployment-99")
     })

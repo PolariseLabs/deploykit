@@ -52,7 +52,13 @@ export const toDeployment = (
         : undefined
   })
 
-export const getDeployment = (vercel: VercelClient, deploymentId: string) =>
+/**
+ * Vercel addresses a deployment by id alone, so the app is not needed here.
+ * The contract asks for it because a provider that scopes deployments under a
+ * project cannot work without it, and one provider's flat namespace is a poor
+ * reason to make every other adapter lie.
+ */
+export const getDeployment = (vercel: VercelClient, _appId: string, deploymentId: string) =>
   vercel.getDeployment(deploymentId).pipe(
     Effect.map(deployment => toDeployment(deployment)),
     Effect.mapError(cause => toProviderError(cause, { deploymentId }))

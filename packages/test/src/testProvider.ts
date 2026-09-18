@@ -267,7 +267,7 @@ export const make = (config: TestProviderConfig = {}): Effect.Effect<TestProvide
      * that polls sees pending, then deploying, then deployed, which is the
      * shape real polling code has to cope with.
      */
-    const getDeployment = (deploymentId: string) =>
+    const getDeployment = (_appId: string, deploymentId: string) =>
       Effect.gen(function* () {
         const call = yield* Ref.updateAndGet(pollCount, n => n + 1)
         const failing =

@@ -39,7 +39,7 @@ export const makeVercelControl = (vercel: VercelClient): Provider.ControlPlane =
   findAppByName: name => findVercelProjectByName(vercel, name),
   setAccess: (id, access) => setVercelProjectAccess(vercel, id, access),
   accessModes: new Set<Provider.AccessMode>(["public", "password", "sso"]),
-  getDeployment: id => getDeployment(vercel, id)
+  getDeployment: (appId, id) => getDeployment(vercel, appId, id)
 })
 
 /** Reads VERCEL_TOKEN, falling back to VERCEL_API_KEY, plus VERCEL_TEAM_ID. */

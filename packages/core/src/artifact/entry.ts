@@ -44,8 +44,21 @@ export interface DeferredEntry {
   readonly path: ArtifactPath
   readonly byteLength: number
   readonly read: (signal?: AbortSignal) => Promise<Uint8Array>
-  /** Hex sha1 of the content, when the caller already knows it. */
-  readonly sha1?: string
+  /**
+   * Digests the caller already knows, keyed by algorithm.
+   *
+   * A record rather than a `sha1` field, because the digest a provider wants
+   * is the provider's business. Vercel addresses uploads by hex sha1 of the
+   * bytes; Cloudflare Pages hashes sha256 over base64 content plus the file
+   * extension. A single named field would have made one of them the default
+   * and the other a special case.
+   *
+   * Supplying one is what lets a republish skip reading a file at all: the
+   * manifest can be built, and the provider asked what it is missing, without
+   * ever fetching the bytes. An adapter that finds no key it recognises
+   * simply reads and hashes as usual.
+   */
+  readonly digests?: Readonly<Record<string, string>>
 }
 
 export type Entry = TextEntry | BytesEntry | FileEntry | DeferredEntry
@@ -108,7 +121,7 @@ export const deferred = (
   options: {
     readonly byteLength: number
     readonly read: (signal?: AbortSignal) => Promise<Uint8Array>
-    readonly sha1?: string
+    readonly digests?: Readonly<Record<string, string>>
   }
 ) =>
   Effect.gen(function* () {
@@ -118,7 +131,7 @@ export const deferred = (
       path: normalPath,
       byteLength: options.byteLength,
       read: options.read,
-      ...(options.sha1 !== undefined ? { sha1: options.sha1 } : {})
+      ...(options.digests !== undefined ? { digests: options.digests } : {})
     }
     return entry
   })

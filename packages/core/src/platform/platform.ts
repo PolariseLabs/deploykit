@@ -3,12 +3,13 @@ import {
   appId,
   DeploymentProvider,
   isTerminal,
+  UnsupportedError,
   type Access,
   type App,
   type DeploymentStatus,
   type Deployment
 } from "../provider/provider.ts"
-import { capabilitiesOf, type Capabilities } from "../provider/capabilities.ts"
+import { capabilitiesOf, type AccessMode, type Capabilities } from "../provider/capabilities.ts"
 import type { ProviderError } from "../provider/errors.ts"
 import type { AppStoreError, DeploymentTimeoutError } from "./errors.ts"
 import { DeploymentTimeoutError as TimeoutError } from "./errors.ts"
@@ -74,13 +75,16 @@ export interface PlatformApi {
      * Absent when the provider has no access model; `capabilities.accessModes`
      * says which modes it accepts.
      */
-    readonly setAccess?: (id: string, access: Access) => Effect.Effect<void, ProviderError>
+    readonly setAccess?: (
+      id: string,
+      access: Access
+    ) => Effect.Effect<void, ProviderError | UnsupportedError>
   }
 
   readonly deploy: (app: App, options: DeployOptions) => Effect.Effect<Deployment, ProviderError>
 
   readonly deployments: {
-    readonly get: (id: string) => Effect.Effect<Deployment, ProviderError>
+    readonly get: (appId: string, deploymentId: string) => Effect.Effect<Deployment, ProviderError>
 
     /**
      * Poll until the provider says the deployment has stopped moving.
@@ -96,7 +100,8 @@ export interface PlatformApi {
      * be bounded, or a stuck build leaks a fiber per tenant.
      */
     readonly waitUntilReady: (
-      id: string,
+      appId: string,
+      deploymentId: string,
       options?: WaitOptions
     ) => Effect.Effect<Deployment, ProviderError | DeploymentTimeoutError>
   }
@@ -126,9 +131,10 @@ export const layer = Layer.effect(
   Effect.gen(function* () {
     const provider = yield* DeploymentProvider
     const store = yield* TenantAppStore
+    const capabilities = capabilitiesOf(provider)
 
     return {
-      capabilities: capabilitiesOf(provider),
+      capabilities,
 
       apps: {
         get: (id: string) => provider.getApp(id),
@@ -146,7 +152,31 @@ export const layer = Layer.effect(
 
         ...(provider.setAccess === undefined
           ? {}
-          : { setAccess: provider.setAccess.bind(provider) }),
+          : {
+              setAccess: (id: string, access: Access) => {
+                const mode: AccessMode =
+                  access._tag === "Public"
+                    ? "public"
+                    : access._tag === "Password"
+                      ? "password"
+                      : "sso"
+
+                /**
+                 * Refuse a mode the provider does not declare, rather than
+                 * letting it fail somewhere in the adapter as a generic
+                 * error. The caller can act on this one.
+                 */
+                return capabilities.accessModes.has(mode)
+                  ? provider.setAccess!(id, access)
+                  : Effect.fail(
+                      new UnsupportedError({
+                        provider: provider.name,
+                        capability: `access:${mode}`,
+                        message: `${provider.name} supports ${[...capabilities.accessModes].join(", ") || "no access modes"}`
+                      })
+                    )
+              }
+            }),
 
         getOrCreate: (options: GetOrCreateOptions) =>
           Effect.gen(function* () {
@@ -209,9 +239,9 @@ export const layer = Layer.effect(
       deploy: (app: App, options: DeployOptions) => provider.deploy(app.id, options.artifact),
 
       deployments: {
-        get: (id: string) => provider.getDeployment(id),
+        get: (appId: string, deploymentId: string) => provider.getDeployment(appId, deploymentId),
 
-        waitUntilReady: (id: string, options: WaitOptions = {}) =>
+        waitUntilReady: (appId: string, id: string, options: WaitOptions = {}) =>
           Effect.gen(function* () {
             const schedule = options.schedule ?? defaultSchedule
             const tolerate = options.tolerateFailures ?? 3
@@ -221,7 +251,7 @@ export const layer = Layer.effect(
             /** The last status actually observed, for a timeout worth reading. */
             const seen = yield* Ref.make<DeploymentStatus | undefined>(undefined)
 
-            const tick = provider.getDeployment(id).pipe(
+            const tick = provider.getDeployment(appId, id).pipe(
               Effect.tap(deployment =>
                 Ref.set(misses, 0).pipe(Effect.andThen(Ref.set(seen, deployment.status)))
               ),

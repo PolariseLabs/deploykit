@@ -62,7 +62,7 @@ const makeProvider = (vercel: VercelClient, fs: FileSystem.FileSystem): Provider
   setAccess: (id, access) => setVercelProjectAccess(vercel, id, access),
   accessModes: new Set<Provider.AccessMode>(["public", "password", "sso"]),
   deploy: (appId, artifact) => deployToVercelProject(vercel, fs, appId, artifact),
-  getDeployment: id => getDeployment(vercel, id)
+  getDeployment: (appId, id) => getDeployment(vercel, appId, id)
 })
 
 export { makeVercelClient } from "./services/http.js"

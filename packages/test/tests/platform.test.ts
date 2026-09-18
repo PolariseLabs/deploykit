@@ -187,7 +187,7 @@ describe("deploy", () => {
       const app = yield* platform.apps.getOrCreate({ externalId: "c1", name: "c1" })
       const started = yield* platform.deploy(app, { artifact: Artifact.empty })
 
-      const fetched = yield* platform.deployments.get(started.id)
+      const fetched = yield* platform.deployments.get(app.id, started.id)
 
       assert.strictEqual(fetched.id, started.id)
     }).pipe(Effect.provide(live()))
@@ -201,7 +201,9 @@ describe("waitUntilReady", () => {
       const app = yield* platform.apps.getOrCreate({ externalId: "c1", name: "c1" })
       const started = yield* platform.deploy(app, { artifact: Artifact.empty })
 
-      const settled = yield* platform.deployments.waitUntilReady(started.id, { schedule: instant })
+      const settled = yield* platform.deployments.waitUntilReady(app.id, started.id, {
+        schedule: instant
+      })
 
       assert.strictEqual(settled.status, "deployed")
       assert.strictEqual(settled.url, `https://${started.name}.test.deploykit.dev`)
@@ -214,7 +216,9 @@ describe("waitUntilReady", () => {
       const app = yield* platform.apps.getOrCreate({ externalId: "c1", name: "c1" })
       const started = yield* platform.deploy(app, { artifact: Artifact.empty })
 
-      const settled = yield* platform.deployments.waitUntilReady(started.id, { schedule: instant })
+      const settled = yield* platform.deployments.waitUntilReady(app.id, started.id, {
+        schedule: instant
+      })
 
       assert.strictEqual(settled.status, "failed", "failed is terminal too")
     }).pipe(Effect.provide(live({ failOn: { build: ["app-1"] } })))
@@ -231,7 +235,7 @@ describe("waitUntilReady", () => {
       const started = yield* platform.deploy(app, { artifact: Artifact.empty })
 
       const error = yield* Effect.flip(
-        platform.deployments.waitUntilReady(started.id, { schedule: instant })
+        platform.deployments.waitUntilReady(app.id, started.id, { schedule: instant })
       )
 
       // The error channel is a union, so reading lastStatus needs the tag check
@@ -249,9 +253,11 @@ describe("waitUntilReady", () => {
       const platform = yield* Platform.Platform
       const app = yield* platform.apps.getOrCreate({ externalId: "c1", name: "c1" })
       const started = yield* platform.deploy(app, { artifact: Artifact.empty })
-      yield* platform.deployments.waitUntilReady(started.id, { schedule: instant })
+      yield* platform.deployments.waitUntilReady(app.id, started.id, { schedule: instant })
 
-      const again = yield* platform.deployments.waitUntilReady(started.id, { schedule: instant })
+      const again = yield* platform.deployments.waitUntilReady(app.id, started.id, {
+        schedule: instant
+      })
 
       assert.strictEqual(again.status, "deployed")
     }).pipe(Effect.provide(live()))
@@ -518,7 +524,7 @@ describe("polling through failures", () => {
       const app = yield* platform.apps.getOrCreate({ externalId: "c1", name: "c1" })
       const started = yield* platform.deploy(app, { artifact: Artifact.empty })
 
-      const settled = yield* platform.deployments.waitUntilReady(started.id, {
+      const settled = yield* platform.deployments.waitUntilReady(app.id, started.id, {
         schedule: instant
       })
 
@@ -533,7 +539,7 @@ describe("polling through failures", () => {
       const started = yield* platform.deploy(app, { artifact: Artifact.empty })
 
       const error = yield* Effect.flip(
-        platform.deployments.waitUntilReady(started.id, {
+        platform.deployments.waitUntilReady(app.id, started.id, {
           schedule: instant,
           tolerateFailures: 2
         })
@@ -556,7 +562,7 @@ describe("polling through failures", () => {
       // Fails on polls 1 and 3, answering in between. Two failures total,
       // never two in a row. With a tolerance of 2 this only survives if an
       // answer resets the counter.
-      const settled = yield* platform.deployments.waitUntilReady(started.id, {
+      const settled = yield* platform.deployments.waitUntilReady(app.id, started.id, {
         schedule: instant,
         tolerateFailures: 2
       })
@@ -572,7 +578,7 @@ describe("polling through failures", () => {
       const started = yield* platform.deploy(app, { artifact: Artifact.empty })
 
       const error = yield* Effect.flip(
-        platform.deployments.waitUntilReady(started.id, { schedule: instant })
+        platform.deployments.waitUntilReady(app.id, started.id, { schedule: instant })
       )
 
       assert.strictEqual(error._tag, "DeploymentTimeoutError")
@@ -651,5 +657,41 @@ describe("offboarding", () => {
       const platform = yield* Platform.Platform
       assert.strictEqual(platform.apps.setAccess, undefined)
     }).pipe(Effect.provide(live({ withoutAccessControl: true })))
+  )
+})
+
+describe("capability refusals", () => {
+  /**
+   * "This provider has no password protection" is not "setting it failed".
+   * A caller retries one and not the other, so they are different errors.
+   */
+  it.effect("refuses a mode the provider does not declare", () =>
+    Effect.gen(function* () {
+      const platform = yield* Platform.Platform
+      const app = yield* platform.apps.getOrCreate({ externalId: "c1", name: "c1" })
+
+      const error = yield* Effect.flip(
+        platform.apps.setAccess!(app.id, { _tag: "Password", password: "hunter2" })
+      )
+
+      assert.strictEqual(error._tag, "UnsupportedError")
+      if (error._tag === "UnsupportedError") {
+        assert.strictEqual(error.capability, "access:password")
+        assert.match(error.message, /public, sso/, "says what it does support")
+      }
+    }).pipe(Effect.provide(live()))
+  )
+
+  it.effect("allows a mode the provider does declare", () =>
+    Effect.gen(function* () {
+      const platform = yield* Platform.Platform
+      const test = yield* TestProvider.TestProvider
+      const app = yield* platform.apps.getOrCreate({ externalId: "c1", name: "c1" })
+
+      yield* platform.apps.setAccess!(app.id, { _tag: "SingleSignOn" })
+
+      const access = yield* test.accessFor(app.id)
+      assert.deepStrictEqual(Option.getOrNull(access), { _tag: "SingleSignOn" })
+    }).pipe(Effect.provide(live()))
   )
 })
