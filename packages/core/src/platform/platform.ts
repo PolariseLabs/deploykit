@@ -1,9 +1,10 @@
-import { Context, Effect, Exit, Layer, Option, Schedule, Schema } from "effect"
+import { Context, Effect, Exit, Layer, Option, Ref, Schedule, Schema } from "effect"
 import {
   appId,
   DeploymentProvider,
   isTerminal,
   type App,
+  type DeploymentStatus,
   type Deployment
 } from "../provider/provider.ts"
 import { capabilitiesOf, type Capabilities } from "../provider/capabilities.ts"
@@ -17,6 +18,23 @@ export interface GetOrCreateOptions {
   readonly externalId: string
   readonly name: string
 }
+export interface WaitOptions {
+  /** How often to ask, and for how long. Must be bounded. */
+  readonly schedule?: Schedule.Schedule<unknown>
+  /**
+   * How many consecutive failed polls to ride out before giving up.
+   *
+   * A failed status check is not a failed deployment. The build is almost
+   * certainly still running while the provider rate-limits us or drops a
+   * request, and abandoning the wait turns their bad minute into our failure.
+   * Defaults to 3, the same tolerance the consumer settled on.
+   *
+   * Distinct from transport retry, which makes a single call survive a blip
+   * over seconds. This rides out a call that failed even after those retries.
+   */
+  readonly tolerateFailures?: number
+}
+
 export interface DeployOptions {
   readonly artifact: Artifact
 }
@@ -50,7 +68,7 @@ export interface PlatformApi {
      */
     readonly waitUntilReady: (
       id: string,
-      schedule?: Schedule.Schedule<unknown>
+      options?: WaitOptions
     ) => Effect.Effect<Deployment, ProviderError | DeploymentTimeoutError>
   }
 }
@@ -147,15 +165,58 @@ export const layer = Layer.effect(
       deployments: {
         get: (id: string) => provider.getDeployment(id),
 
-        waitUntilReady: (id: string, schedule: Schedule.Schedule<unknown> = defaultSchedule) =>
+        waitUntilReady: (id: string, options: WaitOptions = {}) =>
           Effect.gen(function* () {
-            const deployment = yield* provider
-              .getDeployment(id)
-              .pipe(Effect.repeat({ until: d => isTerminal(d.status), schedule }))
+            const schedule = options.schedule ?? defaultSchedule
+            const tolerate = options.tolerateFailures ?? 3
 
-            return isTerminal(deployment.status)
-              ? deployment
-              : yield* new TimeoutError({ deploymentId: id, lastStatus: deployment.status })
+            /** Consecutive failures, reset by any answer at all. */
+            const misses = yield* Ref.make(0)
+            /** The last status actually observed, for a timeout worth reading. */
+            const seen = yield* Ref.make<DeploymentStatus | undefined>(undefined)
+
+            const tick = provider.getDeployment(id).pipe(
+              Effect.tap(deployment =>
+                Ref.set(misses, 0).pipe(Effect.andThen(Ref.set(seen, deployment.status)))
+              ),
+              Effect.map(deployment => ({ _tag: "Answered" as const, deployment })),
+              Effect.catchTag("ProviderError", error =>
+                Ref.updateAndGet(misses, n => n + 1).pipe(
+                  Effect.map(consecutive => ({ _tag: "Missed" as const, error, consecutive }))
+                )
+              )
+            )
+
+            /**
+             * repeat runs once, then repeats until the predicate holds or the
+             * schedule runs out. Stopping on a terminal status is the happy
+             * path; stopping on too many consecutive misses is giving up; the
+             * schedule running out is the timeout.
+             */
+            const last = yield* tick.pipe(
+              Effect.repeat({
+                until: outcome =>
+                  outcome._tag === "Answered"
+                    ? isTerminal(outcome.deployment.status)
+                    : outcome.consecutive >= tolerate,
+                schedule
+              })
+            )
+
+            if (last._tag === "Missed") {
+              // The provider's error, not a timeout: we stopped because it kept
+              // failing, and that error is what the caller needs to see.
+              return yield* last.error
+            }
+            if (isTerminal(last.deployment.status)) {
+              return last.deployment
+            }
+            return yield* new TimeoutError({
+              deploymentId: id,
+              lastStatus: yield* Ref.get(seen).pipe(
+                Effect.map(status => status ?? last.deployment.status)
+              )
+            })
           })
       }
     }

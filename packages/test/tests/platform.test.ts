@@ -201,7 +201,7 @@ describe("waitUntilReady", () => {
       const app = yield* platform.apps.getOrCreate({ externalId: "c1", name: "c1" })
       const started = yield* platform.deploy(app, { artifact: Artifact.empty })
 
-      const settled = yield* platform.deployments.waitUntilReady(started.id, instant)
+      const settled = yield* platform.deployments.waitUntilReady(started.id, { schedule: instant })
 
       assert.strictEqual(settled.status, "deployed")
       assert.strictEqual(settled.url, `https://${started.name}.test.deploykit.dev`)
@@ -214,7 +214,7 @@ describe("waitUntilReady", () => {
       const app = yield* platform.apps.getOrCreate({ externalId: "c1", name: "c1" })
       const started = yield* platform.deploy(app, { artifact: Artifact.empty })
 
-      const settled = yield* platform.deployments.waitUntilReady(started.id, instant)
+      const settled = yield* platform.deployments.waitUntilReady(started.id, { schedule: instant })
 
       assert.strictEqual(settled.status, "failed", "failed is terminal too")
     }).pipe(Effect.provide(live({ failOn: { build: ["app-1"] } })))
@@ -230,7 +230,9 @@ describe("waitUntilReady", () => {
       const app = yield* platform.apps.getOrCreate({ externalId: "c1", name: "c1" })
       const started = yield* platform.deploy(app, { artifact: Artifact.empty })
 
-      const error = yield* Effect.flip(platform.deployments.waitUntilReady(started.id, instant))
+      const error = yield* Effect.flip(
+        platform.deployments.waitUntilReady(started.id, { schedule: instant })
+      )
 
       // The error channel is a union, so reading lastStatus needs the tag check
       // to narrow it: ProviderError has no such field.
@@ -247,9 +249,9 @@ describe("waitUntilReady", () => {
       const platform = yield* Platform.Platform
       const app = yield* platform.apps.getOrCreate({ externalId: "c1", name: "c1" })
       const started = yield* platform.deploy(app, { artifact: Artifact.empty })
-      yield* platform.deployments.waitUntilReady(started.id, instant)
+      yield* platform.deployments.waitUntilReady(started.id, { schedule: instant })
 
-      const again = yield* platform.deployments.waitUntilReady(started.id, instant)
+      const again = yield* platform.deployments.waitUntilReady(started.id, { schedule: instant })
 
       assert.strictEqual(again.status, "deployed")
     }).pipe(Effect.provide(live()))
@@ -500,5 +502,83 @@ describe("adoption, the cases equality of names would hide", () => {
         "the orphan stays: we adopted it, we did not create it, so it is not ours to delete"
       )
     }).pipe(Effect.provide(live({}, { raceLostFor: { c1: "app-1" } })))
+  )
+})
+
+describe("polling through failures", () => {
+  /**
+   * A failed status check is not a failed deployment. The build carries on
+   * while the provider drops a request, and abandoning the wait turns their
+   * bad minute into our failure. This is the behaviour deploykit lacked and
+   * the consumer had.
+   */
+  it.effect("rides out a few failed polls and still reports the result", () =>
+    Effect.gen(function* () {
+      const platform = yield* Platform.Platform
+      const app = yield* platform.apps.getOrCreate({ externalId: "c1", name: "c1" })
+      const started = yield* platform.deploy(app, { artifact: Artifact.empty })
+
+      const settled = yield* platform.deployments.waitUntilReady(started.id, {
+        schedule: instant
+      })
+
+      assert.strictEqual(settled.status, "deployed")
+    }).pipe(Effect.provide(live({ failFirstPolls: 2 })))
+  )
+
+  it.effect("gives up after too many consecutive failures, with the provider's error", () =>
+    Effect.gen(function* () {
+      const platform = yield* Platform.Platform
+      const app = yield* platform.apps.getOrCreate({ externalId: "c1", name: "c1" })
+      const started = yield* platform.deploy(app, { artifact: Artifact.empty })
+
+      const error = yield* Effect.flip(
+        platform.deployments.waitUntilReady(started.id, {
+          schedule: instant,
+          tolerateFailures: 2
+        })
+      )
+
+      assert.strictEqual(
+        error._tag,
+        "ProviderError",
+        "the provider's failure, not a timeout: we stopped because it kept failing"
+      )
+    }).pipe(Effect.provide(live({ failFirstPolls: 50 })))
+  )
+
+  it.effect("counts consecutive failures, not total: one good poll resets it", () =>
+    Effect.gen(function* () {
+      const platform = yield* Platform.Platform
+      const app = yield* platform.apps.getOrCreate({ externalId: "c1", name: "c1" })
+      const started = yield* platform.deploy(app, { artifact: Artifact.empty })
+
+      // Fails on polls 1 and 3, answering in between. Two failures total,
+      // never two in a row. With a tolerance of 2 this only survives if an
+      // answer resets the counter.
+      const settled = yield* platform.deployments.waitUntilReady(started.id, {
+        schedule: instant,
+        tolerateFailures: 2
+      })
+
+      assert.strictEqual(settled.status, "deployed")
+    }).pipe(Effect.provide(live({ failPollsAt: [1, 3] })))
+  )
+
+  it.effect("a timeout still reports the last status actually seen", () =>
+    Effect.gen(function* () {
+      const platform = yield* Platform.Platform
+      const app = yield* platform.apps.getOrCreate({ externalId: "c1", name: "c1" })
+      const started = yield* platform.deploy(app, { artifact: Artifact.empty })
+
+      const error = yield* Effect.flip(
+        platform.deployments.waitUntilReady(started.id, { schedule: instant })
+      )
+
+      assert.strictEqual(error._tag, "DeploymentTimeoutError")
+      if (error._tag === "DeploymentTimeoutError") {
+        assert.strictEqual(error.lastStatus, "pending")
+      }
+    }).pipe(Effect.provide(live({ neverFinish: ["app-1"] })))
   )
 })

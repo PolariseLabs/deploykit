@@ -38,6 +38,18 @@ export interface TestProviderConfig {
   readonly withoutAdoptByName?: boolean
   /** Omit setAccess, modelling a provider with no access model at all. */
   readonly withoutAccessControl?: boolean
+  /**
+   * Fail the first N calls to getDeployment, then behave normally. Models a
+   * provider that drops or throttles status checks while the build carries on
+   * regardless, which is the case a poller has to ride out.
+   */
+  readonly failFirstPolls?: number
+  /**
+   * Fail getDeployment on these 1-based call numbers. Unlike failFirstPolls
+   * this can interleave failures with answers, which is what distinguishes
+   * "too many consecutive failures" from "too many failures".
+   */
+  readonly failPollsAt?: ReadonlyArray<number>
 }
 
 /** What the provider kept about one deployment, including the files it was handed. */
@@ -139,6 +151,9 @@ export const make = (config: TestProviderConfig = {}): Effect.Effect<TestProvide
     const failBuild = new Set(config.failOn?.build ?? [])
     const neverFinish = new Set(config.neverFinish ?? [])
     const accessById = yield* Ref.make(new Map<string, Provider.Access>())
+    const pollsToFail = yield* Ref.make(config.failFirstPolls ?? 0)
+    const pollCount = yield* Ref.make(0)
+    const failAt = new Set(config.failPollsAt ?? [])
 
     const createApp = (name: string) =>
       Effect.gen(function* () {
@@ -254,6 +269,16 @@ export const make = (config: TestProviderConfig = {}): Effect.Effect<TestProvide
      */
     const getDeployment = (deploymentId: string) =>
       Effect.gen(function* () {
+        const call = yield* Ref.updateAndGet(pollCount, n => n + 1)
+        const failing =
+          failAt.has(call) ||
+          (yield* Ref.modify(pollsToFail, remaining =>
+            remaining > 0 ? [true, remaining - 1] : [false, remaining]
+          ))
+        if (failing) {
+          return yield* failure(`getDeployment is configured to fail`, { deploymentId })
+        }
+
         const { deployments } = yield* Ref.get(state)
         const record = deployments.get(deploymentId)
 
