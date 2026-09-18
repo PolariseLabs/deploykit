@@ -41,6 +41,13 @@ export interface StubConfig {
   readonly retryAfterSeconds?: number
   /** Every call fails before reaching the server, so there is no status. */
   readonly failWithoutResponse?: string
+  /**
+   * SHAs the first createDeployment reports as missing, as Vercel does when a
+   * manifest references bytes it has never seen. Subsequent calls succeed.
+   */
+  readonly missingOnFirstDeploy?: ReadonlyArray<string>
+  /** Reject the first createDeployment with a digest complaint and no list. */
+  readonly digestComplaintOnFirstDeploy?: boolean
 }
 
 const defaultDeployment: VercelDeploymentLike = {
@@ -104,6 +111,29 @@ export const stubClient = (config: StubConfig = {}): StubClient => {
       },
       createDeployment: request => {
         deployRequests.push(request)
+        const first = deployRequests.length === 1
+        if (first && config.missingOnFirstDeploy !== undefined) {
+          return Effect.fail(
+            new VercelApiError({
+              operation: "createDeployment",
+              message: "createDeployment failed: HTTP 400",
+              statusCode: 400,
+              body: JSON.stringify({
+                error: { code: "missing_files", missing: config.missingOnFirstDeploy }
+              })
+            })
+          )
+        }
+        if (first && config.digestComplaintOnFirstDeploy === true) {
+          return Effect.fail(
+            new VercelApiError({
+              operation: "createDeployment",
+              message: "createDeployment failed: HTTP 400",
+              statusCode: 400,
+              body: '{"error":{"code":"invalid_digest","message":"File digest missing"}}'
+            })
+          )
+        }
         return guard("createDeployment", deployment)
       },
       getDeployment: idOrUrl => {

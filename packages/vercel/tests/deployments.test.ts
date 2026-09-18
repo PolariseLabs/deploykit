@@ -64,7 +64,12 @@ it.layer(NodeFileSystem.layer)("with a filesystem", it => {
   })
 
   describe("deployToVercelProject", () => {
-    it.effect("uploads every entry with its sha1 and byte length", () =>
+    /**
+     * The manifest goes first. Uploading before asking costs a read and a
+     * transfer per file even when Vercel already holds the bytes, which on a
+     * republish is most of the tree.
+     */
+    it.effect("uploads nothing when Vercel accepts the manifest", () =>
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem
         const stub = stubClient()
@@ -75,12 +80,91 @@ it.layer(NodeFileSystem.layer)("with a filesystem", it => {
 
         yield* deployToVercelProject(stub.client, fs, "prj_1", artifact)
 
-        assert.strictEqual(stub.uploads.length, 2)
-        const shas = stub.uploads.map(upload => upload.sha).sort()
+        assert.strictEqual(stub.uploads.length, 0, "Vercel already had them")
+        assert.strictEqual(stub.deployRequests.length, 1)
+        const shas = stub.deployRequests[0]!.files.map(file => file.sha).sort()
         assert.deepStrictEqual(shas, [EMPTY_SHA, HI_SHA].sort())
-        const sizes = stub.uploads.map(upload => upload.bytes.byteLength).sort()
+        const sizes = stub.deployRequests[0]!.files.map(file => file.size).sort()
         assert.deepStrictEqual(sizes, [0, 2])
-      })
+      }).pipe(Effect.provide(NodeFileSystem.layer))
+    )
+
+    it.effect("uploads only the files Vercel says it is missing, then retries", () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem
+        const stub = stubClient({ missingOnFirstDeploy: [HI_SHA] })
+        const artifact = yield* Artifact.make([
+          yield* Entry.text("hi.txt", "hi"),
+          yield* Entry.text("empty.txt", "")
+        ])
+
+        yield* deployToVercelProject(stub.client, fs, "prj_1", artifact)
+
+        assert.strictEqual(stub.uploads.length, 1, "only the missing one")
+        assert.strictEqual(stub.uploads[0]?.sha, HI_SHA)
+        assert.strictEqual(stub.deployRequests.length, 2, "manifest, upload, manifest again")
+      }).pipe(Effect.provide(NodeFileSystem.layer))
+    )
+
+    it.effect("uploads everything when Vercel complains about digests with no list", () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem
+        const stub = stubClient({ digestComplaintOnFirstDeploy: true })
+        const artifact = yield* Artifact.make([
+          yield* Entry.text("hi.txt", "hi"),
+          yield* Entry.text("empty.txt", "")
+        ])
+
+        yield* deployToVercelProject(stub.client, fs, "prj_1", artifact)
+
+        assert.strictEqual(stub.uploads.length, 2, "a first publish: it holds none of them")
+      }).pipe(Effect.provide(NodeFileSystem.layer))
+    )
+
+    it.effect("never reads a deferred entry whose sha it already knows", () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem
+        const stub = stubClient()
+        let reads = 0
+        const artifact = yield* Artifact.make([
+          yield* Entry.deferred("big.bin", {
+            byteLength: 1024,
+            sha1: "deadbeef",
+            read: () => {
+              reads += 1
+              return Promise.resolve(new Uint8Array(1024))
+            }
+          })
+        ])
+
+        yield* deployToVercelProject(stub.client, fs, "prj_1", artifact)
+
+        assert.strictEqual(reads, 0, "the whole point: no fetch, no hash")
+        assert.strictEqual(stub.deployRequests[0]?.files[0]?.sha, "deadbeef")
+        assert.strictEqual(stub.deployRequests[0]?.files[0]?.size, 1024)
+      }).pipe(Effect.provide(NodeFileSystem.layer))
+    )
+
+    it.effect("reads a deferred entry when it is actually missing", () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem
+        const stub = stubClient({ missingOnFirstDeploy: ["deadbeef"] })
+        let reads = 0
+        const artifact = yield* Artifact.make([
+          yield* Entry.deferred("big.bin", {
+            byteLength: 3,
+            sha1: "deadbeef",
+            read: () => {
+              reads += 1
+              return Promise.resolve(new Uint8Array([1, 2, 3]))
+            }
+          })
+        ])
+
+        yield* deployToVercelProject(stub.client, fs, "prj_1", artifact)
+
+        assert.strictEqual(reads, 1, "fetched once, only because Vercel asked")
+      }).pipe(Effect.provide(NodeFileSystem.layer))
     )
 
     it.effect("sends the artifact's paths to createDeployment, in insertion order", () =>

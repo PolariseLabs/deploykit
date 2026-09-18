@@ -110,3 +110,58 @@ it.layer(NodeFileSystem.layer)("with a filesystem", it => {
     )
   })
 })
+
+describe("deferred entries", () => {
+  /**
+   * The reason sizing is free. An object store reports size in its listing, so
+   * a deferred entry is told its length when it is made and never has to be
+   * fetched to be measured.
+   */
+  it.effect("reports the length it was given, without reading", () =>
+    Effect.gen(function* () {
+      let reads = 0
+      const entry = yield* Entry.deferred("big.bin", {
+        byteLength: 4096,
+        read: () => {
+          reads += 1
+          return Promise.resolve(new Uint8Array(4096))
+        }
+      })
+
+      assert.strictEqual(yield* Artifact.sizeOf(entry), 4096)
+      assert.strictEqual(reads, 0, "measuring must not fetch")
+    }).pipe(Effect.provide(NodeFileSystem.layer))
+  )
+
+  it.effect("totals a mixed tree without fetching the deferred parts", () =>
+    Effect.gen(function* () {
+      let reads = 0
+      const artifact = yield* Artifact.make([
+        yield* Entry.text("index.html", "hello"),
+        yield* Entry.deferred("video.mp4", {
+          byteLength: 1_000_000,
+          read: () => {
+            reads += 1
+            return Promise.resolve(new Uint8Array(0))
+          }
+        })
+      ])
+
+      assert.strictEqual(yield* Artifact.totalSize(artifact), 1_000_005)
+      assert.strictEqual(reads, 0)
+    }).pipe(Effect.provide(NodeFileSystem.layer))
+  )
+
+  it.effect("says which entries are already in hand", () =>
+    Effect.gen(function* () {
+      const text = yield* Entry.text("a.txt", "a")
+      const lazy = yield* Entry.deferred("b.bin", {
+        byteLength: 1,
+        read: () => Promise.resolve(new Uint8Array([1]))
+      })
+
+      assert.isTrue(Entry.isResident(text))
+      assert.isFalse(Entry.isResident(lazy))
+    }).pipe(Effect.provide(NodeFileSystem.layer))
+  )
+})

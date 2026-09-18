@@ -110,6 +110,35 @@ export type ProjectAccess =
   | { readonly _tag: "VercelAuth" }
   | { readonly _tag: "Password"; readonly password: string }
 
+/**
+ * The SHAs Vercel says it does not hold, pulled off a rejected createDeployment.
+ *
+ * Vercel answers a manifest referencing bytes it has never seen with an error
+ * listing them, either at `error.missing` or `missing`. A first publish often
+ * rejects with no list at all, which means "I have none of these".
+ */
+export const missingShas = (error: VercelApiError): ReadonlyArray<string> | undefined => {
+  if (error.body === undefined) return undefined
+  const parsed = ((): unknown => {
+    try {
+      return JSON.parse(error.body)
+    } catch {
+      return undefined
+    }
+  })()
+  const candidate =
+    (parsed as { error?: { missing?: unknown } } | undefined)?.error?.missing ??
+    (parsed as { missing?: unknown } | undefined)?.missing
+  return Array.isArray(candidate) && candidate.every(sha => typeof sha === "string")
+    ? candidate
+    : undefined
+}
+
+/** A manifest rejected because Vercel holds none of the referenced bytes. */
+export const isMissingDigest = (error: VercelApiError): boolean =>
+  error.body !== undefined &&
+  (error.body.includes("invalid_digest") || error.body.includes("File digest missing"))
+
 export interface VercelClient {
   readonly createProject: (name: string) => Effect.Effect<VercelProjectLike, VercelApiError>
   readonly getProject: (idOrName: string) => Effect.Effect<VercelProjectLike, VercelApiError>

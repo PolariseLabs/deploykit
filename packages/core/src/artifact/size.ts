@@ -3,9 +3,12 @@ import { type Entry } from "./entry.js"
 import { list, type Artifact } from "./artifact.js"
 
 /**
- * Size in UTF-8 bytes, which is how providers measure an upload. Text and Bytes
- * answer for free; a File cannot without a syscall, so the whole function
- * requires a FileSystem.
+ * Size in UTF-8 bytes, which is how providers measure an upload.
+ *
+ * Text, Bytes and Deferred answer for free: the first two hold their content
+ * and the third is told its length when it is created, because object stores
+ * report size in a listing. Only File needs a syscall, which is why the whole
+ * function requires a FileSystem even though most entries never touch it.
  */
 export const sizeOf = (entry: Entry) =>
   Match.valueTags(entry, {
@@ -17,7 +20,8 @@ export const sizeOf = (entry: Entry) =>
         const info = yield* fs.stat(e.source)
         // info.size is a branded bigint; artifacts sit far below MAX_SAFE_INTEGER.
         return Number(info.size)
-      })
+      }),
+    Deferred: e => Effect.succeed(e.byteLength)
   })
 
 /** Bounded, or a 400 file dist opens 400 file handles at once. */
