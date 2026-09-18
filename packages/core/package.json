@@ -1,6 +1,6 @@
 {
   "name": "@deploykit/core",
-  "version": "0.0.0",
+  "version": "1.0.0",
   "description": "Provider-independent deployment domain: Artifact, App, Deployment, errors, capabilities.",
   "type": "module",
   "license": "MIT",
@@ -10,6 +10,22 @@
     ".": {
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
+    },
+    "./provider": {
+      "types": "./dist/provider/index.d.ts",
+      "default": "./dist/provider/index.js"
+    },
+    "./platform": {
+      "types": "./dist/platform/index.d.ts",
+      "default": "./dist/platform/index.js"
+    },
+    "./artifact": {
+      "types": "./dist/artifact/index.d.ts",
+      "default": "./dist/artifact/index.js"
+    },
+    "./entry": {
+      "types": "./dist/artifact/entry.d.ts",
+      "default": "./dist/artifact/entry.js"
     }
   },
   "files": [

@@ -1,7 +1,8 @@
 /** The adapter contract. Declared here, implemented by @deploykit/vercel and @deploykit/test. */
 
-import type { Effect } from "effect"
-import { Context, Schema } from "effect"
+import type { Option } from "effect"
+import type { AccessMode } from "./capabilities.js"
+import { Context, Effect, Layer, Schema } from "effect"
 
 import type { ProviderError } from "./errors.js"
 import type { Artifact } from "../artifact/index.js"
@@ -46,6 +47,31 @@ export const isTerminal = (status: DeploymentStatus): boolean => {
 export const deploymentUrl = Schema.String.pipe(Schema.brand("DeploymentUrl"))
 export type DeploymentUrl = typeof deploymentUrl.Type
 export type AppId = typeof appId.Type
+/**
+ * A provider was asked for something it does not do.
+ *
+ * Distinct from a ProviderError on purpose: "this provider has no password
+ * protection" is not the same as "setting it failed", and a caller retries
+ * one and not the other. Capability gaps are part of the contract, so they
+ * get their own failure rather than being flattened into the generic one.
+ */
+export class UnsupportedError extends Schema.TaggedError<UnsupportedError>()("UnsupportedError", {
+  provider: Schema.String,
+  /** The operation or mode that is not available. */
+  capability: Schema.String,
+  message: Schema.String
+}) {}
+
+/**
+ * Who may open a deployment. A closed union rather than a boolean, because
+ * "not public" splits into meaningfully different things a caller chooses
+ * between.
+ */
+export type Access =
+  | { readonly _tag: "Public" }
+  | { readonly _tag: "Password"; readonly password: string }
+  | { readonly _tag: "SingleSignOn" }
+
 export class App extends Schema.Class<App>("App")({
   id: appId,
   name: appName
@@ -56,10 +82,33 @@ export class Deployment extends Schema.Class<Deployment>("Deployment")({
   name: deploymentName,
   appId: appId,
   status: deploymentStatus,
-  url: Schema.optional(deploymentUrl)
+  /**
+   * Where this deployment can be reached, once it can be.
+   *
+   * A terminal status does not mean this URL is routable yet: the provider
+   * assigns the domain after the deployment finishes. Observed on Vercel at
+   * roughly 0.4s, 404ing before that. A caller that must know the site answers
+   * has to ask the URL, and should expect to retry briefly.
+   */
+  url: Schema.optional(deploymentUrl),
+  /** Why a failed deployment failed, when the provider says. */
+  reason: Schema.optional(Schema.String)
 }) {}
 
-export interface Provider {
+/**
+ * Everything a provider can do that does not move bytes.
+ *
+ * Split out because where these run is not where `deploy` can run. Creating a
+ * project, resolving one, setting access and polling a deployment are small
+ * HTTP calls; deploying is a whole tree of files. Convex's V8 runtime gives a
+ * function 64 MiB and thirty minutes, which is generous for the former and
+ * nowhere near enough for the latter, where the consumer has seen 898 MB trees.
+ *
+ * So a caller that only needs the control plane depends on this and never
+ * pulls a byte-mover, a hasher or a filesystem into its bundle. That matters
+ * against a 32 MiB deployment-wide code limit.
+ */
+export interface ControlPlane {
   readonly name: string
 
   /** Create an isolated app for one tenant. */
@@ -68,8 +117,29 @@ export interface Provider {
   /** Resolve an app that already exists. */
   readonly getApp: (id: string) => Effect.Effect<App, ProviderError>
 
-  /** Put an artifact into an app.  */
-  readonly deploy: (appId: string, artifact: Artifact) => Effect.Effect<Deployment, ProviderError>
+  /**
+   * Resolve an app by name, or None if the provider has none by that name.
+   *
+   * Optional, because a provider that addresses apps only by opaque id cannot
+   * answer it. Where it exists, deploykit can adopt an app whose mapping was
+   * lost, which is the difference between a create that self-heals and one that
+   * leaks a duplicate on every retry. Declare it by implementing it.
+   */
+  readonly findAppByName?: (name: string) => Effect.Effect<Option.Option<App>, ProviderError>
+
+  /**
+   * Restrict who may open this app's deployments.
+   *
+   * Optional: a provider may have no access model at all. Where it exists the
+   * modes differ, so an adapter that implements this also declares
+   * `accessModes`. Worth setting explicitly on a freshly created app: a team
+   * with protection on by default produces apps nobody outside it can reach,
+   * which is wrong for something deployed on a customer's behalf.
+   */
+  readonly setAccess?: (id: string, access: Access) => Effect.Effect<void, ProviderError>
+
+  /** Which modes `setAccess` accepts. Absent when `setAccess` is. */
+  readonly accessModes?: ReadonlySet<AccessMode>
 
   /**
    * Remove an app. Needed to compensate a half-finished create, and for tenant
@@ -78,10 +148,106 @@ export interface Provider {
    */
   readonly deleteApp: (id: string) => Effect.Effect<void, ProviderError>
 
-  /** Read one deployment back, for polling status and URL. */
-  readonly getDeployment: (deploymentId: string) => Effect.Effect<Deployment, ProviderError>
+  /**
+   * Read one deployment back, for polling status and URL.
+   *
+   * Takes the app as well as the deployment, because a deployment belongs to
+   * an app and not every provider makes one addressable on its own. Vercel
+   * does; Cloudflare Pages scopes deployments under a project and has no
+   * endpoint for an id alone. `Deployment` already carries `appId`, so this
+   * only makes the contract say what the domain already did.
+   */
+  readonly getDeployment: (
+    appId: string,
+    deploymentId: string
+  ) => Effect.Effect<Deployment, ProviderError>
+}
+
+/**
+ * What a deploy reports while it runs.
+ *
+ * A publish of a thousand files takes minutes, and a caller showing a user
+ * what is happening needs more than "it finished". Throttling in particular
+ * is worth surfacing: it looks identical to being stuck.
+ *
+ * The callback returns an Effect so a caller can log, write a progress row or
+ * push an event without leaving the runtime.
+ */
+export type DeployProgress =
+  | { readonly _tag: "Hashing"; readonly done: number; readonly total: number }
+  | {
+      readonly _tag: "Uploading"
+      readonly done: number
+      readonly total: number
+      readonly bytes: number
+    }
+  | { readonly _tag: "Throttled"; readonly retryAfterMs?: number }
+  | { readonly _tag: "Created"; readonly deploymentId: string }
+
+export interface DeployOptions {
+  /**
+   * Which slot to publish to. A provider with no such notion ignores it, and
+   * says so in its documentation rather than failing.
+   */
+  readonly target?: "production" | "preview"
+
+  /**
+   * Metadata carried to the provider, for linking a deployment back to
+   * whatever caused it. the consumer uses this to find the release a deployment
+   * belongs to when something goes wrong days later.
+   */
+  readonly meta?: Readonly<Record<string, string>>
+
+  /*
+   * There is deliberately no `resume`.
+   *
+   * It was here, and a real deploy proved it a lie. Vercel's createDeployment
+   * accepts a deploymentId, but naming an existing deployment does NOT
+   * continue it: it creates a second one. Tested directly, two different ids
+   * came back. An option called resume that silently duplicates is worse than
+   * no option, because duplicating is the thing it was meant to prevent.
+   *
+   * Recovering a create whose response was lost is the caller's, using its
+   * own records: tag the deploy with `meta`, keep the id you were given, and
+   * ask `getDeployment` whether it exists. That is what the consumer's
+   * gatewayDeploymentRecovery already does, reading persisted state rather
+   * than asking the provider to sort it out.
+   */
+
+  /** Called as the deploy progresses. Failures here must not fail the deploy. */
+  readonly onProgress?: (event: DeployProgress) => Effect.Effect<void>
+}
+
+/** The control plane plus the one operation that moves bytes. */
+export interface Provider extends ControlPlane {
+  /** Put an artifact into an app. */
+  readonly deploy: (
+    appId: string,
+    artifact: Artifact,
+    options?: DeployOptions
+  ) => Effect.Effect<Deployment, ProviderError>
 }
 
 export class DeploymentProvider extends Context.Service<DeploymentProvider, Provider>()(
   "@deploykit/DeploymentProvider"
 ) {}
+
+/**
+ * The control plane on its own, for a caller that cannot or should not deploy.
+ *
+ * A Provider satisfies this structurally, so an adapter needs nothing extra:
+ * `Provider.controlLayer` derives it. Depend on this in a runtime that only
+ * reads and polls.
+ */
+export class DeploymentControl extends Context.Service<DeploymentControl, ControlPlane>()(
+  "@deploykit/DeploymentControl"
+) {}
+
+/** Every full provider is also a control plane. */
+export const controlLayer = Layer.effect(
+  DeploymentControl,
+  Effect.gen(function* () {
+    const provider = yield* DeploymentProvider
+    return provider
+  })
+)

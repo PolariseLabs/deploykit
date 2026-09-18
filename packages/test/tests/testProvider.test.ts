@@ -167,9 +167,9 @@ describe("getDeployment", () => {
       const app = yield* provider.createApp("alpha")
       const deployment = yield* provider.deploy(app.id, yield* artifactOf(yield* indexHtml))
 
-      const first = yield* provider.getDeployment(deployment.id)
-      const second = yield* provider.getDeployment(deployment.id)
-      const third = yield* provider.getDeployment(deployment.id)
+      const first = yield* provider.getDeployment(app.id, deployment.id)
+      const second = yield* provider.getDeployment(app.id, deployment.id)
+      const third = yield* provider.getDeployment(app.id, deployment.id)
 
       assert.strictEqual(first.status, "pending")
       assert.strictEqual(second.status, "deploying")
@@ -183,9 +183,9 @@ describe("getDeployment", () => {
       const app = yield* provider.createApp("alpha")
       const deployment = yield* provider.deploy(app.id, Artifact.empty)
 
-      yield* provider.getDeployment(deployment.id)
-      const deploying = yield* provider.getDeployment(deployment.id)
-      const deployed = yield* provider.getDeployment(deployment.id)
+      yield* provider.getDeployment(app.id, deployment.id)
+      const deploying = yield* provider.getDeployment(app.id, deployment.id)
+      const deployed = yield* provider.getDeployment(app.id, deployment.id)
 
       assert.strictEqual(deploying.url, undefined)
       assert.strictEqual(deployed.url, "https://deployment-1.test.deploykit.dev")
@@ -198,9 +198,9 @@ describe("getDeployment", () => {
       const app = yield* provider.createApp("alpha")
       const deployment = yield* provider.deploy(app.id, Artifact.empty)
 
-      yield* provider.getDeployment(deployment.id)
-      yield* provider.getDeployment(deployment.id)
-      const settled = yield* provider.getDeployment(deployment.id)
+      yield* provider.getDeployment(app.id, deployment.id)
+      yield* provider.getDeployment(app.id, deployment.id)
+      const settled = yield* provider.getDeployment(app.id, deployment.id)
 
       assert.strictEqual(settled.status, "failed")
       assert.strictEqual(settled.url, undefined)
@@ -213,9 +213,9 @@ describe("getDeployment", () => {
       const app = yield* provider.createApp("alpha")
       const deployment = yield* provider.deploy(app.id, Artifact.empty)
 
-      yield* Effect.forEach([1, 2, 3], () => provider.getDeployment(deployment.id))
-      const settled = yield* provider.getDeployment(deployment.id)
-      const stillSettled = yield* provider.getDeployment(deployment.id)
+      yield* Effect.forEach([1, 2, 3], () => provider.getDeployment(app.id, deployment.id))
+      const settled = yield* provider.getDeployment(app.id, deployment.id)
+      const stillSettled = yield* provider.getDeployment(app.id, deployment.id)
 
       assert.strictEqual(settled.status, "deployed")
       assert.strictEqual(stillSettled.status, "deployed")
@@ -226,7 +226,7 @@ describe("getDeployment", () => {
     Effect.gen(function* () {
       const { provider } = yield* TestProvider.make()
 
-      const error = yield* Effect.flip(provider.getDeployment("deployment-99"))
+      const error = yield* Effect.flip(provider.getDeployment("app-1", "deployment-99"))
 
       assert.strictEqual(error.deploymentId, "deployment-99")
     })
@@ -296,6 +296,61 @@ it.layer(TestProvider.layer())("through the layer", it => {
 
       assert.strictEqual(after.apps.size, before + 1)
       assert.deepStrictEqual(after.apps.get(app.id), app)
+    })
+  )
+})
+
+describe("access control", () => {
+  it.effect("records the access a caller sets", () =>
+    Effect.gen(function* () {
+      const { provider, accessFor } = yield* TestProvider.make()
+      const app = yield* provider.createApp("alpha")
+
+      yield* provider.setAccess!(app.id, { _tag: "Public" })
+
+      const access = yield* accessFor(app.id)
+      assert.deepStrictEqual(Option.getOrNull(access), { _tag: "Public" })
+    })
+  )
+
+  it.effect("fails for an app that does not exist", () =>
+    Effect.gen(function* () {
+      const { provider } = yield* TestProvider.make()
+
+      const error = yield* Effect.flip(provider.setAccess!("app-99", { _tag: "Public" }))
+
+      assert.strictEqual(error.appId, "app-99")
+    })
+  )
+
+  /**
+   * The half of Capabilities that cannot be derived. Both providers below have
+   * the method; they differ in what they accept, and nothing about the object
+   * reveals that.
+   */
+  it.effect("declares which modes it accepts", () =>
+    Effect.gen(function* () {
+      const { provider } = yield* TestProvider.make()
+
+      const capabilities = Provider.capabilitiesOf(provider)
+
+      assert.isTrue(capabilities.accessModes.has("public"))
+      assert.isTrue(capabilities.accessModes.has("sso"))
+      assert.isFalse(
+        capabilities.accessModes.has("password"),
+        "the test provider does not do passwords, and says so"
+      )
+    })
+  )
+
+  it.effect("reports no modes at all when the provider has no access model", () =>
+    Effect.gen(function* () {
+      const { provider } = yield* TestProvider.make({ withoutAccessControl: true })
+
+      const capabilities = Provider.capabilitiesOf(provider)
+
+      assert.strictEqual(capabilities.accessModes.size, 0)
+      assert.strictEqual(provider.setAccess, undefined, "absent, not a stub that throws")
     })
   )
 })

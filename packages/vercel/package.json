@@ -10,6 +10,10 @@
     ".": {
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
+    },
+    "./control": {
+      "types": "./dist/control.d.ts",
+      "default": "./dist/control.js"
     }
   },
   "files": [
@@ -22,7 +26,6 @@
   "dependencies": {
     "@deploykit/core": "workspace:*",
     "@effect/platform-node": "4.0.0-rc.112",
-    "@vercel/sdk": "^1.28.29",
     "effect": "4.0.0-rc.112"
   }
 }

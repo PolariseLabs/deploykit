@@ -63,3 +63,56 @@ export const normalise = (input: string): Effect.Effect<ArtifactPath, InvalidArt
     return ArtifactPathSchema.make(segments.join("/"))
   })
 }
+
+export interface ExactOptions {
+  /**
+   * Require the path to sit under this prefix, itself given canonically.
+   * A deploy tree usually has a root (`.vercel/output` for Vercel), and a file
+   * outside it is a producer mistake rather than something to relocate.
+   */
+  readonly root?: string
+}
+
+/**
+ * Accept a path only if it is already exactly what will be written.
+ *
+ * `normalise` repairs: it trims, applies NFC, rewrites backslashes and drops
+ * `.` and empty segments. That is convenient when the path and the thing that
+ * refers to it are produced together, and dangerous when they are not. A
+ * config that says `./assets/x.png` while the file is written as
+ * `assets/x.png` resolves against the current route and 404s, and the repair
+ * is what hid the mismatch.
+ *
+ * So this rejects instead, for producers that compute references separately
+ * and need the path they asked for to be the path they get. Same rules, no
+ * silent fixes: the producer should emit the path it means.
+ *
+ * Use `normalise` for input a human typed. Use this for a path some other part
+ * of your system is going to point at.
+ */
+export const exact = (
+  input: string,
+  options: ExactOptions = {}
+): Effect.Effect<ArtifactPath, InvalidArtifactPathError> =>
+  Effect.gen(function* () {
+    const repaired = yield* normalise(input)
+
+    if (repaired !== input) {
+      return yield* new InvalidArtifactPathError({
+        path: input,
+        reason: `path is not canonical: it would be written as "${repaired}"`
+      })
+    }
+
+    if (options.root !== undefined) {
+      const root = options.root.endsWith("/") ? options.root : `${options.root}/`
+      if (!repaired.startsWith(root)) {
+        return yield* new InvalidArtifactPathError({
+          path: input,
+          reason: `path must sit under "${root}"`
+        })
+      }
+    }
+
+    return repaired
+  })

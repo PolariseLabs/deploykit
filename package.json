@@ -14,13 +14,20 @@
     "lint": "eslint .",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "prepare": "effect-language-service patch"
+    "prepare": "effect-language-service patch",
+    "smoke": "bun scripts/smoke.ts",
+    "check:control": "bun scripts/check-control-bundle.ts"
   },
   "devDependencies": {
+    "@deploykit/cloudflare": "workspace:*",
+    "@deploykit/core": "workspace:*",
+    "@deploykit/vercel": "workspace:*",
     "@effect/language-service": "0.87.2",
+    "@effect/platform-node": "4.0.0-rc.112",
     "@effect/vitest": "4.0.0-rc.112",
     "@eslint/js": "10.0.1",
     "@types/node": "24.13.3",
+    "effect": "4.0.0-rc.112",
     "eslint": "10.10.0",
     "prettier": "3.9.6",
     "typescript": "5.9.3",

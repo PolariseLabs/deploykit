@@ -59,7 +59,7 @@ it.layer(NodeFileSystem.layer)("fromDirectory", it => {
     it.effect("sizes the whole tree from disk", () =>
       Effect.gen(function* () {
         const artifact = yield* Artifact.fromDirectory(yield* tree)
-        assert.strictEqual(yield* Artifact.totalSize(artifact), 16)
+        assert.strictEqual(Artifact.totalSize(artifact), 16)
       })
     )
   })
@@ -100,7 +100,7 @@ it.layer(NodeFileSystem.layer)("fromDirectory", it => {
 
         const artifact = yield* Artifact.fromDirectory(dir)
         assert.isTrue(yield* Artifact.has(artifact, "link.txt"))
-        assert.strictEqual(yield* Artifact.totalSize(artifact), 6, "2 local + 4 through the link")
+        assert.strictEqual(Artifact.totalSize(artifact), 6, "2 local + 4 through the link")
       })
     )
 

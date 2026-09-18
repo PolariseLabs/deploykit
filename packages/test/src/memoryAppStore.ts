@@ -8,7 +8,7 @@
  */
 
 import { Context, Effect, Layer, Option, Ref } from "effect"
-import type { Provider } from "@deploykit/core"
+import { Provider } from "@deploykit/core"
 import { Platform } from "@deploykit/core"
 
 export interface MemoryAppStoreConfig {
@@ -17,7 +17,20 @@ export interface MemoryAppStoreConfig {
     readonly get?: ReadonlyArray<string>
     /** External ids whose put fails, which is what triggers compensation. */
     readonly put?: ReadonlyArray<string>
+    /**
+     * External ids whose put fails only the FIRST time. Models a store that was
+     * briefly down: the failure leaks an orphan, and the retry can then record
+     * the adoption.
+     */
+    readonly putOnce?: ReadonlyArray<string>
   }
+  /**
+   * External ids that already have an app recorded, but whose FIRST get returns
+   * None. That is precisely a lost race: our read happened before the other
+   * caller's write, so our own write is the thing that discovers the conflict.
+   * Deterministic, unlike actually racing two fibers.
+   */
+  readonly raceLostFor?: Readonly<Record<string, string>>
 }
 
 export interface MemoryAppStoreApi {
@@ -28,10 +41,18 @@ export interface MemoryAppStoreApi {
 
 export const makeAppStore = (config: MemoryAppStoreConfig = {}): Effect.Effect<MemoryAppStoreApi> =>
   Effect.gen(function* () {
-    const state = yield* Ref.make(new Map<string, Provider.AppId>())
+    const raced = Object.entries(config.raceLostFor ?? {})
+    const state = yield* Ref.make(
+      new Map<string, Provider.AppId>(
+        raced.map(([externalId, winner]) => [externalId, Provider.appId.make(winner)])
+      )
+    )
+    /** External ids still owed one None from get, to simulate the stale read. */
+    const pendingRace = yield* Ref.make(new Set(raced.map(([externalId]) => externalId)))
 
     const failGet = new Set(config.failOn?.get ?? [])
     const failPut = new Set(config.failOn?.put ?? [])
+    const failPutOnce = yield* Ref.make(new Set(config.failOn?.putOnce ?? []))
 
     const get = (externalId: string) =>
       Effect.gen(function* () {
@@ -42,24 +63,63 @@ export const makeAppStore = (config: MemoryAppStoreConfig = {}): Effect.Effect<M
           })
         }
 
+        const stale = yield* Ref.modify(pendingRace, owed => {
+          if (!owed.has(externalId)) {
+            return [false, owed]
+          }
+          const remaining = new Set(owed)
+          remaining.delete(externalId)
+          return [true, remaining]
+        })
+        if (stale) {
+          return Option.none()
+        }
+
         const mapping = yield* Ref.get(state)
         return Option.fromUndefinedOr(mapping.get(externalId))
       })
 
     const put = (externalId: string, appId: Provider.AppId) =>
       Effect.gen(function* () {
-        if (failPut.has(externalId)) {
+        const failingOnce = yield* Ref.modify(failPutOnce, owed => {
+          if (!owed.has(externalId)) {
+            return [false, owed]
+          }
+          const remaining = new Set(owed)
+          remaining.delete(externalId)
+          return [true, remaining]
+        })
+
+        if (failPut.has(externalId) || failingOnce) {
           return yield* new Platform.AppStoreError({
             message: `put is configured to fail for "${externalId}"`,
             externalId
           })
         }
 
-        yield* Ref.update(state, mapping => new Map(mapping).set(externalId, appId))
+        // Insert-if-absent in one step, which is what the contract demands of a
+        // real store and what a unique constraint would give you.
+        return yield* Ref.modify(state, mapping => {
+          const existing = mapping.get(externalId)
+          if (existing !== undefined) {
+            return [{ _tag: "AlreadyRecorded", appId: existing } as Platform.PutOutcome, mapping]
+          }
+          return [
+            { _tag: "Stored" } as Platform.PutOutcome,
+            new Map(mapping).set(externalId, appId)
+          ]
+        })
+      })
+
+    const forget = (externalId: string) =>
+      Ref.update(state, mapping => {
+        const remaining = new Map(mapping)
+        remaining.delete(externalId)
+        return remaining
       })
 
     return {
-      store: { get, put },
+      store: { get, put, forget },
       snapshot: Ref.get(state)
     }
   })

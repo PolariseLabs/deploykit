@@ -3,8 +3,8 @@ import { Effect, Option } from "effect"
 import * as Artifact from "../../src/artifact/artifact.ts"
 import * as Entry from "../../src/artifact/entry.ts"
 
-const index = Entry.file("index.html", "/dist/index.html")
-const app = Entry.file("assets/app.js", "/dist/assets/app.js")
+const index = Entry.fileWithSize("index.html", "/dist/index.html", 10)
+const app = Entry.fileWithSize("assets/app.js", "/dist/assets/app.js", 20)
 const config = Entry.text("config.json", '{"brand":"acme"}')
 
 describe("empty", () => {
@@ -134,8 +134,8 @@ describe("make", () => {
   it.effect("preserves insertion order", () =>
     Effect.gen(function* () {
       const artifact = yield* Artifact.make([
-        yield* Entry.file("b.html", "/d/b.html"),
-        yield* Entry.file("a.html", "/d/a.html"),
+        yield* Entry.fileWithSize("b.html", "/d/b.html", 1),
+        yield* Entry.fileWithSize("a.html", "/d/a.html", 1),
         yield* Entry.text("c.json", "{}")
       ])
       assert.deepStrictEqual(

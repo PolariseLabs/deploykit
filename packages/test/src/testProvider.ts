@@ -8,7 +8,7 @@
  * for.
  */
 
-import { Context, Effect, Layer, Ref } from "effect"
+import { Context, Effect, Layer, Option, Ref } from "effect"
 import type { Artifact } from "@deploykit/core"
 import { Provider } from "@deploykit/core"
 
@@ -31,6 +31,25 @@ export interface TestProviderConfig {
    * build that hangs, which is what a poller's bound exists to survive.
    */
   readonly neverFinish?: ReadonlyArray<string>
+  /**
+   * Omit findAppByName, so the provider declares it cannot adopt by name. Models
+   * a provider that addresses apps only by opaque id.
+   */
+  readonly withoutAdoptByName?: boolean
+  /** Omit setAccess, modelling a provider with no access model at all. */
+  readonly withoutAccessControl?: boolean
+  /**
+   * Fail the first N calls to getDeployment, then behave normally. Models a
+   * provider that drops or throttles status checks while the build carries on
+   * regardless, which is the case a poller has to ride out.
+   */
+  readonly failFirstPolls?: number
+  /**
+   * Fail getDeployment on these 1-based call numbers. Unlike failFirstPolls
+   * this can interleave failures with answers, which is what distinguishes
+   * "too many consecutive failures" from "too many failures".
+   */
+  readonly failPollsAt?: ReadonlyArray<number>
 }
 
 /** What the provider kept about one deployment, including the files it was handed. */
@@ -55,6 +74,8 @@ export interface TestProviderApi {
   readonly provider: Provider.Provider
   /** Everything recorded so far. */
   readonly snapshot: Effect.Effect<TestState>
+  /** What access was last set for an app, for assertions. */
+  readonly accessFor: (id: string) => Effect.Effect<Option.Option<Provider.Access>>
   /** The exact artifact a deployment was created from. */
   readonly artifactFor: (
     deploymentId: string
@@ -129,6 +150,10 @@ export const make = (config: TestProviderConfig = {}): Effect.Effect<TestProvide
     const failDeploy = new Set(config.failOn?.deploy ?? [])
     const failBuild = new Set(config.failOn?.build ?? [])
     const neverFinish = new Set(config.neverFinish ?? [])
+    const accessById = yield* Ref.make(new Map<string, Provider.Access>())
+    const pollsToFail = yield* Ref.make(config.failFirstPolls ?? 0)
+    const pollCount = yield* Ref.make(0)
+    const failAt = new Set(config.failPollsAt ?? [])
 
     const createApp = (name: string) =>
       Effect.gen(function* () {
@@ -165,6 +190,21 @@ export const make = (config: TestProviderConfig = {}): Effect.Effect<TestProvide
         const app = apps.get(id)
 
         return app === undefined ? yield* failure(`no app "${id}"`, { appId: id }) : app
+      })
+
+    const setAccess = (id: string, access: Provider.Access) =>
+      Effect.gen(function* () {
+        const { apps } = yield* Ref.get(state)
+        if (!apps.has(id)) {
+          return yield* failure(`no app "${id}"`, { appId: id })
+        }
+        yield* Ref.update(accessById, current => new Map(current).set(id, access))
+      })
+
+    const findAppByName = (name: string) =>
+      Effect.gen(function* () {
+        const { apps } = yield* Ref.get(state)
+        return Option.fromUndefinedOr(Array.from(apps.values()).find(app => app.name === name))
       })
 
     const deleteApp = (id: string) =>
@@ -227,8 +267,18 @@ export const make = (config: TestProviderConfig = {}): Effect.Effect<TestProvide
      * that polls sees pending, then deploying, then deployed, which is the
      * shape real polling code has to cope with.
      */
-    const getDeployment = (deploymentId: string) =>
+    const getDeployment = (_appId: string, deploymentId: string) =>
       Effect.gen(function* () {
+        const call = yield* Ref.updateAndGet(pollCount, n => n + 1)
+        const failing =
+          failAt.has(call) ||
+          (yield* Ref.modify(pollsToFail, remaining =>
+            remaining > 0 ? [true, remaining - 1] : [false, remaining]
+          ))
+        if (failing) {
+          return yield* failure(`getDeployment is configured to fail`, { deploymentId })
+        }
+
         const { deployments } = yield* Ref.get(state)
         const record = deployments.get(deploymentId)
 
@@ -260,15 +310,31 @@ export const make = (config: TestProviderConfig = {}): Effect.Effect<TestProvide
           : record.artifact
       })
 
+    const base = {
+      name: "test",
+      createApp,
+      getApp,
+      deleteApp,
+      deploy,
+      getDeployment
+    }
+
     return {
+      // Spread rather than a property set to undefined: with
+      // exactOptionalPropertyTypes, absent and undefined are different things,
+      // and capabilitiesOf asks whether the key is absent.
       provider: {
-        name: "test",
-        createApp,
-        getApp,
-        deleteApp,
-        deploy,
-        getDeployment
+        ...base,
+        ...(config.withoutAdoptByName === true ? {} : { findAppByName }),
+        ...(config.withoutAccessControl === true
+          ? {}
+          : {
+              setAccess,
+              accessModes: new Set<Provider.AccessMode>(["public", "sso"])
+            })
       },
+      accessFor: (id: string) =>
+        Ref.get(accessById).pipe(Effect.map(all => Option.fromUndefinedOr(all.get(id)))),
       snapshot: Ref.get(state),
       artifactFor
     }
