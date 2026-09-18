@@ -9,7 +9,7 @@
  */
 
 import { Schema } from "effect"
-import type * as Provider from "@deploykit/core/provider"
+import * as Provider from "@deploykit/core/provider"
 
 /** The build pipeline, in order. Only the last one succeeding means live. */
 export const pagesStage = Schema.Literals(["queued", "initialize", "clone_repo", "build", "deploy"])
@@ -54,3 +54,35 @@ export const mapLatestStage = (
     }
   }
 }
+
+/**
+ * A Pages deployment as the portable model.
+ *
+ * `appId` is the project NAME, because that is how Cloudflare addresses a
+ * project everywhere: there is no opaque id you can use instead.
+ *
+ * A skipped deployment reports as failed. It did not deploy, and no caller so
+ * far would act differently on the distinction, so it rides in `reason`
+ * rather than earning a fifth status.
+ */
+export const toDeployment = (
+  deployment: {
+    readonly id: string
+    readonly url?: string | undefined
+    readonly project_name?: string | undefined
+    readonly latest_stage: { readonly name: PagesStage; readonly status: PagesStatus }
+    readonly is_skipped?: boolean | undefined
+  },
+  fallbackProjectName: string
+): Provider.Deployment =>
+  Provider.Deployment.make({
+    id: Provider.deploymentId.make(deployment.id),
+    name: Provider.deploymentName.make(deployment.id),
+    appId: Provider.appId.make(deployment.project_name ?? fallbackProjectName),
+    status:
+      deployment.is_skipped === true
+        ? "failed"
+        : mapLatestStage(deployment.latest_stage.name, deployment.latest_stage.status),
+    ...(deployment.url !== undefined ? { url: Provider.deploymentUrl.make(deployment.url) } : {}),
+    ...(deployment.is_skipped === true ? { reason: "skipped" } : {})
+  })

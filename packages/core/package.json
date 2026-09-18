@@ -22,6 +22,10 @@
     "./artifact": {
       "types": "./dist/artifact/index.d.ts",
       "default": "./dist/artifact/index.js"
+    },
+    "./entry": {
+      "types": "./dist/artifact/entry.d.ts",
+      "default": "./dist/artifact/entry.js"
     }
   },
   "files": [

@@ -12,12 +12,12 @@
 import { readFileSync, existsSync } from "node:fs"
 import { dirname, resolve } from "node:path"
 
-const ENTRY = "packages/vercel/dist/control.js"
+const ENTRIES = ["packages/vercel/dist/control.js", "packages/cloudflare/dist/control.js"]
 
 /** Unavailable in Convex's V8 runtime, so reachability here is a regression. */
 const FORBIDDEN_BUILTINS = ["node:crypto", "node:fs", "node:path", "node:buffer"]
 /** The byte-moving half. Reachable from control means the split has collapsed. */
-const FORBIDDEN_MODULES = ["deployments.js", "fromDirectory.js"]
+const FORBIDDEN_MODULES = ["deployments.js", "fromDirectory.js", "digest.js"]
 
 const imported = (source: string): ReadonlyArray<string> =>
   [...source.matchAll(/(?:from|import)\s*["']([^"']+)["']/g)].map(match => match[1]!)
@@ -50,23 +50,32 @@ const walk = (entry: string): { files: Set<string>; external: Set<string> } => {
   return { files, external }
 }
 
-if (!existsSync(ENTRY)) {
-  console.error(`${ENTRY} is not built. Run: bun run build`)
-  process.exit(1)
+let failed = false
+
+for (const entry of ENTRIES) {
+  if (!existsSync(entry)) {
+    console.error(`${entry} is not built. Run: bun run build`)
+    process.exit(1)
+  }
+
+  const { files, external } = walk(entry)
+  const builtins = FORBIDDEN_BUILTINS.filter(name => external.has(name))
+  const modules = FORBIDDEN_MODULES.filter(name =>
+    [...files].some(file => file.endsWith(`/${name}`))
+  )
+
+  const externals = [...external].sort().join(", ") || "(none)"
+  console.log(`${entry}: ${files.size} local modules, external ${externals}`)
+
+  for (const name of builtins) {
+    console.error(`  FAIL reachable Node builtin: ${name}`)
+    failed = true
+  }
+  for (const name of modules) {
+    console.error(`  FAIL reachable deploy-path module: ${name}`)
+    failed = true
+  }
 }
 
-const { files, external } = walk(ENTRY)
-
-const builtins = FORBIDDEN_BUILTINS.filter(name => external.has(name))
-const modules = FORBIDDEN_MODULES.filter(name => [...files].some(file => file.endsWith(`/${name}`)))
-
-console.log(`control graph: ${files.size} local modules`)
-console.log(`external: ${[...external].sort().join(", ") || "(none)"}`)
-
-if (builtins.length > 0 || modules.length > 0) {
-  for (const name of builtins) console.error(`FAIL reachable Node builtin: ${name}`)
-  for (const name of modules) console.error(`FAIL reachable deploy-path module: ${name}`)
-  process.exit(1)
-}
-
+if (failed) process.exit(1)
 console.log("ok: no Node builtins and no deploy-path modules reachable")
