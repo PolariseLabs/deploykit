@@ -1,6 +1,7 @@
 /** The adapter contract. Declared here, implemented by @deploykit/vercel and @deploykit/test. */
 
 import type { Effect, Option } from "effect"
+import type { AccessMode } from "./capabilities.js"
 import { Context, Schema } from "effect"
 
 import type { ProviderError } from "./errors.js"
@@ -46,6 +47,16 @@ export const isTerminal = (status: DeploymentStatus): boolean => {
 export const deploymentUrl = Schema.String.pipe(Schema.brand("DeploymentUrl"))
 export type DeploymentUrl = typeof deploymentUrl.Type
 export type AppId = typeof appId.Type
+/**
+ * Who may open a deployment. A closed union rather than a boolean, because
+ * "not public" splits into meaningfully different things a caller chooses
+ * between.
+ */
+export type Access =
+  | { readonly _tag: "Public" }
+  | { readonly _tag: "Password"; readonly password: string }
+  | { readonly _tag: "SingleSignOn" }
+
 export class App extends Schema.Class<App>("App")({
   id: appId,
   name: appName
@@ -56,6 +67,14 @@ export class Deployment extends Schema.Class<Deployment>("Deployment")({
   name: deploymentName,
   appId: appId,
   status: deploymentStatus,
+  /**
+   * Where this deployment can be reached, once it can be.
+   *
+   * A terminal status does not mean this URL is routable yet: the provider
+   * assigns the domain after the deployment finishes. Observed on Vercel at
+   * roughly 0.4s, 404ing before that. A caller that must know the site answers
+   * has to ask the URL, and should expect to retry briefly.
+   */
   url: Schema.optional(deploymentUrl),
   /** Why a failed deployment failed, when the provider says. */
   reason: Schema.optional(Schema.String)
@@ -79,6 +98,20 @@ export interface Provider {
    * leaks a duplicate on every retry. Declare it by implementing it.
    */
   readonly findAppByName?: (name: string) => Effect.Effect<Option.Option<App>, ProviderError>
+
+  /**
+   * Restrict who may open this app's deployments.
+   *
+   * Optional: a provider may have no access model at all. Where it exists the
+   * modes differ, so an adapter that implements this also declares
+   * `accessModes`. Worth setting explicitly on a freshly created app: a team
+   * with protection on by default produces apps nobody outside it can reach,
+   * which is wrong for something deployed on a customer's behalf.
+   */
+  readonly setAccess?: (id: string, access: Access) => Effect.Effect<void, ProviderError>
+
+  /** Which modes `setAccess` accepts. Absent when `setAccess` is. */
+  readonly accessModes?: ReadonlySet<AccessMode>
 
   /** Put an artifact into an app.  */
   readonly deploy: (appId: string, artifact: Artifact) => Effect.Effect<Deployment, ProviderError>

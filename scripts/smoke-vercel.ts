@@ -18,17 +18,12 @@
  * fails, so a CI run does not litter the account.
  */
 
-import { Cause, Config, Effect, Exit, FileSystem, Layer, Redacted, Schedule, Schema } from "effect"
+import { Cause, Effect, Exit, FileSystem, Layer, Schedule, Schema } from "effect"
 import { NodeFileSystem } from "@effect/platform-node"
 import { Artifact, Entry, Provider } from "@deploykit/core"
-import { makeVercelClient, vercelLayer } from "@deploykit/vercel"
+import { vercelLayer } from "@deploykit/vercel"
 
 const STATIC_PREFIX = ".vercel/output/static"
-
-const token = Config.redacted("VERCEL_TOKEN").pipe(
-  Config.orElse(() => Config.redacted("VERCEL_API_KEY"))
-)
-const teamIdConfig = Config.option(Config.string("VERCEL_TEAM_ID"))
 
 /** Tagged, so it stays distinguishable from a provider failure in the channel. */
 class UsageError extends Schema.TaggedError<UsageError>()("UsageError", {
@@ -164,13 +159,6 @@ const program = Effect.gen(function* () {
   const name = process.argv[3] ?? `deploykit-smoke-${Date.now()}`
 
   const provider = yield* Provider.DeploymentProvider
-  // The escape hatch: the smoke test needs a project setting that is not part
-  // of the portable contract, so it drops to the Vercel client directly.
-  const teamId = yield* teamIdConfig
-  const vercel = makeVercelClient({
-    token: Redacted.value(yield* token),
-    ...(teamId._tag === "Some" ? { teamId: teamId.value } : {})
-  })
 
   const fs = yield* FileSystem.FileSystem
   const expectedIndex = yield* fs.readFileString(`${directory}/index.html`)
@@ -189,9 +177,15 @@ const program = Effect.gen(function* () {
 
   // A team with deployment protection on by default makes every new project
   // unreachable, so the serving check would only ever see Vercel's login page.
-  // the consumer clears the same two fields for exactly this reason.
-  yield* vercel.setProjectAccess(app.id, { _tag: "Public" })
-  yield* Effect.log("access: public")
+  // Through the portable contract, not the Vercel client: if this is a real
+  // capability it should be reachable without dropping to the adapter.
+  if (provider.setAccess === undefined) {
+    yield* Effect.log("access: this provider has no access model, skipping")
+  } else {
+    yield* provider.setAccess(app.id, { _tag: "Public" })
+    const modes = [...Provider.capabilitiesOf(provider).accessModes].join(", ")
+    yield* Effect.log(`access: public (provider supports: ${modes})`)
+  }
 
   // Deleting even on failure: a half-finished smoke run should not leave a
   // project behind, and this is the same compensation shape Platform uses.

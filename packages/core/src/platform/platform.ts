@@ -36,9 +36,17 @@ export interface PlatformApi {
     readonly get: (id: string) => Effect.Effect<Deployment, ProviderError>
 
     /**
-     * Poll until the deployment stops moving. The schedule is a parameter so a
-     * test can pass a zero-delay one; it must be bounded, or a stuck build
-     * leaks a fiber per tenant.
+     * Poll until the provider says the deployment has stopped moving.
+     *
+     * That is all it means. It does NOT mean the URL serves: the provider
+     * assigns the domain after the deployment finishes, so `url` can 404 for a
+     * moment afterwards. Checking that is deliberately left to the caller,
+     * because a protected deployment answers 401 to us while being perfectly
+     * healthy for its real audience, and because "did the build fail" and "is
+     * the CDN slow" are better as two questions than one ambiguous answer.
+     *
+     * The schedule is a parameter so a test can pass a zero-delay one; it must
+     * be bounded, or a stuck build leaks a fiber per tenant.
      */
     readonly waitUntilReady: (
       id: string,

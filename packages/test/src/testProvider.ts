@@ -36,6 +36,8 @@ export interface TestProviderConfig {
    * a provider that addresses apps only by opaque id.
    */
   readonly withoutAdoptByName?: boolean
+  /** Omit setAccess, modelling a provider with no access model at all. */
+  readonly withoutAccessControl?: boolean
 }
 
 /** What the provider kept about one deployment, including the files it was handed. */
@@ -60,6 +62,8 @@ export interface TestProviderApi {
   readonly provider: Provider.Provider
   /** Everything recorded so far. */
   readonly snapshot: Effect.Effect<TestState>
+  /** What access was last set for an app, for assertions. */
+  readonly accessFor: (id: string) => Effect.Effect<Option.Option<Provider.Access>>
   /** The exact artifact a deployment was created from. */
   readonly artifactFor: (
     deploymentId: string
@@ -134,6 +138,7 @@ export const make = (config: TestProviderConfig = {}): Effect.Effect<TestProvide
     const failDeploy = new Set(config.failOn?.deploy ?? [])
     const failBuild = new Set(config.failOn?.build ?? [])
     const neverFinish = new Set(config.neverFinish ?? [])
+    const accessById = yield* Ref.make(new Map<string, Provider.Access>())
 
     const createApp = (name: string) =>
       Effect.gen(function* () {
@@ -170,6 +175,15 @@ export const make = (config: TestProviderConfig = {}): Effect.Effect<TestProvide
         const app = apps.get(id)
 
         return app === undefined ? yield* failure(`no app "${id}"`, { appId: id }) : app
+      })
+
+    const setAccess = (id: string, access: Provider.Access) =>
+      Effect.gen(function* () {
+        const { apps } = yield* Ref.get(state)
+        if (!apps.has(id)) {
+          return yield* failure(`no app "${id}"`, { appId: id })
+        }
+        yield* Ref.update(accessById, current => new Map(current).set(id, access))
       })
 
     const findAppByName = (name: string) =>
@@ -284,7 +298,18 @@ export const make = (config: TestProviderConfig = {}): Effect.Effect<TestProvide
       // Spread rather than a property set to undefined: with
       // exactOptionalPropertyTypes, absent and undefined are different things,
       // and capabilitiesOf asks whether the key is absent.
-      provider: config.withoutAdoptByName === true ? base : { ...base, findAppByName },
+      provider: {
+        ...base,
+        ...(config.withoutAdoptByName === true ? {} : { findAppByName }),
+        ...(config.withoutAccessControl === true
+          ? {}
+          : {
+              setAccess,
+              accessModes: new Set<Provider.AccessMode>(["public", "sso"])
+            })
+      },
+      accessFor: (id: string) =>
+        Ref.get(accessById).pipe(Effect.map(all => Option.fromUndefinedOr(all.get(id)))),
       snapshot: Ref.get(state),
       artifactFor
     }

@@ -299,3 +299,58 @@ it.layer(TestProvider.layer())("through the layer", it => {
     })
   )
 })
+
+describe("access control", () => {
+  it.effect("records the access a caller sets", () =>
+    Effect.gen(function* () {
+      const { provider, accessFor } = yield* TestProvider.make()
+      const app = yield* provider.createApp("alpha")
+
+      yield* provider.setAccess!(app.id, { _tag: "Public" })
+
+      const access = yield* accessFor(app.id)
+      assert.deepStrictEqual(Option.getOrNull(access), { _tag: "Public" })
+    })
+  )
+
+  it.effect("fails for an app that does not exist", () =>
+    Effect.gen(function* () {
+      const { provider } = yield* TestProvider.make()
+
+      const error = yield* Effect.flip(provider.setAccess!("app-99", { _tag: "Public" }))
+
+      assert.strictEqual(error.appId, "app-99")
+    })
+  )
+
+  /**
+   * The half of Capabilities that cannot be derived. Both providers below have
+   * the method; they differ in what they accept, and nothing about the object
+   * reveals that.
+   */
+  it.effect("declares which modes it accepts", () =>
+    Effect.gen(function* () {
+      const { provider } = yield* TestProvider.make()
+
+      const capabilities = Provider.capabilitiesOf(provider)
+
+      assert.isTrue(capabilities.accessModes.has("public"))
+      assert.isTrue(capabilities.accessModes.has("sso"))
+      assert.isFalse(
+        capabilities.accessModes.has("password"),
+        "the test provider does not do passwords, and says so"
+      )
+    })
+  )
+
+  it.effect("reports no modes at all when the provider has no access model", () =>
+    Effect.gen(function* () {
+      const { provider } = yield* TestProvider.make({ withoutAccessControl: true })
+
+      const capabilities = Provider.capabilitiesOf(provider)
+
+      assert.strictEqual(capabilities.accessModes.size, 0)
+      assert.strictEqual(provider.setAccess, undefined, "absent, not a stub that throws")
+    })
+  )
+})

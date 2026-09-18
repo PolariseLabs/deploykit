@@ -46,3 +46,20 @@ export const findVercelProjectByName = (vercel: VercelClient, name: string) =>
         : Effect.fail(toProviderError(cause, { appName: name }))
     )
   )
+
+/**
+ * Vercel models access per project, as two mutually exclusive settings.
+ * Clearing both is what makes a deployment reachable by anyone, which is the
+ * right default for an app deployed on a customer's behalf.
+ */
+export const setVercelProjectAccess = (vercel: VercelClient, id: string, access: Provider.Access) =>
+  vercel
+    .setProjectAccess(
+      id,
+      access._tag === "Public"
+        ? { _tag: "Public" }
+        : access._tag === "SingleSignOn"
+          ? { _tag: "VercelAuth" }
+          : { _tag: "Password", password: access.password }
+    )
+    .pipe(Effect.mapError(cause => toProviderError(cause, { appId: id })))

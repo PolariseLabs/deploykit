@@ -4,7 +4,8 @@ import {
   createVercelProject,
   deleteVercelProject,
   findVercelProjectByName,
-  getVercelProject
+  getVercelProject,
+  setVercelProjectAccess
 } from "./services/app.js"
 import { deployToVercelProject, getDeployment } from "./services/deployments.js"
 import { makeVercelClient } from "./services/http.js"
@@ -57,6 +58,8 @@ const makeProvider = (vercel: VercelClient, fs: FileSystem.FileSystem): Provider
   getApp: id => getVercelProject(vercel, id),
   deleteApp: id => deleteVercelProject(vercel, id),
   findAppByName: name => findVercelProjectByName(vercel, name),
+  setAccess: (id, access) => setVercelProjectAccess(vercel, id, access),
+  accessModes: new Set<Provider.AccessMode>(["public", "password", "sso"]),
   deploy: (appId, artifact) => deployToVercelProject(vercel, fs, appId, artifact),
   getDeployment: id => getDeployment(vercel, id)
 })
