@@ -16,6 +16,16 @@ import { Duration, Effect, Schedule } from "effect"
 export interface RetryableFailure {
   readonly statusCode?: number | undefined
   readonly retryAfterMs?: number | undefined
+  /**
+   * Set by an adapter that knows a failure is worth retrying when the status
+   * code cannot say so.
+   *
+   * Cloudflare answers HTTP 200 with `success: false` for its own internal
+   * errors, including the "An unknown error occurred" that failed a create
+   * once and succeeded on the next attempt. Classifying on status alone sees
+   * a 200 and never retries, so the adapter has to say.
+   */
+  readonly transient?: boolean | undefined
 }
 
 /**
@@ -25,6 +35,7 @@ export interface RetryableFailure {
  * connection, a timeout. Those are the most retryable failures there are.
  */
 export const isTransient = (error: RetryableFailure): boolean => {
+  if (error.transient === true) return true
   const status = error.statusCode
   if (status === undefined) return true
   return status === 408 || status === 429 || (status >= 500 && status < 600)

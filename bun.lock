@@ -5,6 +5,7 @@
     "": {
       "name": "deploykit",
       "devDependencies": {
+        "@deploykit/cloudflare": "workspace:*",
         "@deploykit/core": "workspace:*",
         "@deploykit/vercel": "workspace:*",
         "@effect/language-service": "0.87.2",

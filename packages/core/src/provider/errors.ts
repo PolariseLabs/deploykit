@@ -25,5 +25,7 @@ export class ProviderError extends Schema.TaggedError<ProviderError>()("Provider
   /** Response body, truncated by the adapter. The actionable part is usually here. */
   body: Schema.optional(Schema.String),
   /** Milliseconds the provider asked us to wait, from Retry-After. */
-  retryAfterMs: Schema.optional(Schema.Number)
+  retryAfterMs: Schema.optional(Schema.Number),
+  /** The adapter knows this is worth retrying even if the status does not say so. */
+  transient: Schema.optional(Schema.Boolean)
 }) {}

@@ -20,10 +20,15 @@
 
 import { Cause, Effect, Exit, FileSystem, Layer, Schedule, Schema } from "effect"
 import { NodeFileSystem } from "@effect/platform-node"
-import { Artifact, Entry, Provider } from "@deploykit/core"
+import { Artifact, Entry, Platform, Provider } from "@deploykit/core"
 import { vercelLayer } from "@deploykit/vercel"
+import { cloudflareLayer } from "@deploykit/cloudflare"
 
 const STATIC_PREFIX = ".vercel/output/static"
+
+/** PROVIDER=cloudflare swaps the layer and nothing else. */
+const target: "vercel" | "cloudflare" =
+  process.env["PROVIDER"] === "cloudflare" ? "cloudflare" : "vercel"
 
 /** Tagged, so it stays distinguishable from a provider failure in the channel. */
 class UsageError extends Schema.TaggedError<UsageError>()("UsageError", {
@@ -42,47 +47,64 @@ class NotServing extends Schema.TaggedError<NotServing>()("NotServing", {
  * tells Vercel this is version 3 output. the consumer's template usually carries a
  * config; when it does not, its injector synthesises exactly this.
  */
-const buildOutput = (directory: string) =>
+/**
+ * The one thing that is NOT portable.
+ *
+ * An Artifact is a map of paths to bytes, and that travels. The layout does
+ * not: Vercel wants a Build Output tree with everything under
+ * `.vercel/output/static` and a `config.json` declaring version 3, while
+ * Pages takes the files at the root and has no such file. deploykit deploys
+ * whatever tree you give it; deciding what the tree looks like is the
+ * caller's job, and it is provider-specific.
+ */
+const buildOutput = (directory: string, provider: "vercel" | "cloudflare") =>
   Effect.gen(function* () {
     const source = yield* Artifact.fromDirectory(directory)
+    const prefix = provider === "vercel" ? `${STATIC_PREFIX}/` : ""
 
     const staticFiles = yield* Effect.forEach(Artifact.list(source), entry =>
-      Entry.file(`${STATIC_PREFIX}/${entry.path}`, `${directory}/${entry.path}`)
+      Entry.file(`${prefix}${entry.path}`, `${directory}/${entry.path}`)
     )
 
     /**
-     * A serverless function, because Meet deploys them and a static-only test
-     * proves nothing about them. Build Output API v3: a `.func` directory with
-     * a `.vc-config.json` naming the runtime and handler, and `config.json`
-     * routing to it. Same shape the consumer injects for its gatekeeper middleware.
+     * A serverless function, Vercel only for now. Pages Functions use a
+     * `_worker.js` or a `functions/` directory, which is a different shape
+     * again, so proving one says nothing about the other.
      */
     const fn = ".vercel/output/functions/hello.func"
-    const functionFiles = [
-      yield* Entry.text(
-        `${fn}/.vc-config.json`,
-        JSON.stringify({ runtime: "nodejs20.x", handler: "index.js", launcherType: "Nodejs" })
-      ),
-      yield* Entry.text(
-        `${fn}/index.js`,
-        "module.exports = (req, res) => { res.setHeader('content-type','text/plain'); res.end('deploykit') }"
-      ),
-      yield* Entry.text(`${fn}/package.json`, JSON.stringify({ type: "commonjs" }))
-    ]
+    const functionFiles =
+      provider === "vercel"
+        ? [
+            yield* Entry.text(
+              `${fn}/.vc-config.json`,
+              JSON.stringify({
+                runtime: "nodejs20.x",
+                handler: "index.js",
+                launcherType: "Nodejs"
+              })
+            ),
+            yield* Entry.text(
+              `${fn}/index.js`,
+              "module.exports = (req, res) => { res.setHeader('content-type','text/plain'); res.end('deploykit') }"
+            ),
+            yield* Entry.text(`${fn}/package.json`, JSON.stringify({ type: "commonjs" }))
+          ]
+        : []
 
-    const config = yield* Entry.text(
-      ".vercel/output/config.json",
-      JSON.stringify({ version: 3, routes: [{ src: "/api/hello", dest: "/hello" }] })
-    )
+    const generated =
+      provider === "vercel"
+        ? [
+            yield* Entry.text(
+              ".vercel/output/config.json",
+              JSON.stringify({ version: 3, routes: [{ src: "/api/hello", dest: "/hello" }] })
+            )
+          ]
+        : []
 
-    /**
-     * Layers rather than one flat list, which is how a real publish is built:
-     * a prebuilt template underneath, generated files on top. The overrides it
-     * reports are the thing a flat merge throws away.
-     */
     const layers = [
       { name: "template", entries: staticFiles },
       { name: "functions", entries: functionFiles },
-      { name: "generated", entries: [config] }
+      { name: "generated", entries: generated }
     ]
     const composed = Artifact.layered(layers)
 
@@ -93,10 +115,6 @@ const buildOutput = (directory: string) =>
     }
     for (const override of composed.overrides) {
       yield* Effect.log(`override ${override.path}: ${override.replaced} -> ${override.winner}`)
-    }
-    const clashes = Artifact.collisionsWithinLayers(composed)
-    if (clashes.length > 0) {
-      yield* Effect.log(`WARNING ${clashes.length} collisions inside a single layer`)
     }
 
     return composed.artifact
@@ -115,66 +133,43 @@ const verifyServing = (url: string, expectedIndex: string) =>
   Effect.gen(function* () {
     const started = Date.now()
 
-    const probe = Effect.promise(async () => {
-      const response = await fetch(url, { redirect: "manual" })
-      return {
-        status: response.status,
-        location: response.headers.get("location"),
-        body: await response.text().catch(() => "")
-      }
-    })
-
     /**
-     * READY is not the same as serving. A brand new deployment URL can 404 for
-     * a moment while it propagates, so a single fetch right after the status
-     * turns terminal tests the race, not the deploy. Retry through 404 and 5xx
-     * and report how long it took, which is itself worth knowing.
+     * Core's waitUntilServing, not a hand-rolled loop.
+     *
+     * The loop this replaces died on Cloudflare: a fresh pages.dev subdomain
+     * does not resolve for the better part of a minute, so fetch THROWS
+     * rather than answering 404, and a bare Effect.promise turns that into a
+     * defect. waitUntilServing already treats no-answer as worth waiting for,
+     * which is the whole reason it exists.
      */
-    const response = yield* probe.pipe(
-      Effect.tap(r =>
-        r.status === 404 || r.status >= 500
-          ? Effect.log(`  not live yet (HTTP ${r.status}), waiting`)
-          : Effect.void
-      ),
-      Effect.repeat({
-        until: r => r.status !== 404 && r.status < 500,
-        schedule: Schedule.spaced("2 seconds").pipe(Schedule.upTo({ duration: "90 seconds" }))
-      })
+    const status = yield* Platform.waitUntilServing(url, {
+      schedule: Schedule.spaced("3 seconds").pipe(Schedule.upTo({ duration: "3 minutes" }))
+    }).pipe(
+      Effect.mapError(
+        failure =>
+          new NotServing({
+            url,
+            status: failure.status ?? 0,
+            detail: `never served, waited ${Math.round(failure.waitedMs / 1000)}s`
+          })
+      )
     )
 
+    const body = yield* Effect.promise(() =>
+      fetch(url, { redirect: "manual" }).then(response => response.text())
+    )
     const waited = ((Date.now() - started) / 1000).toFixed(1)
 
-    if (response.status >= 300 && response.status < 400) {
+    if (body !== expectedIndex) {
       return yield* new NotServing({
         url,
-        status: response.status,
-        detail: `redirected to ${response.location ?? "somewhere"}. Deployment protection is probably on, so this run is inconclusive rather than failed.`
-      })
-    }
-    if (response.status === 401 || response.status === 403) {
-      return yield* new NotServing({
-        url,
-        status: response.status,
-        detail: "deployment protection is on, so the check cannot see the page. Inconclusive."
-      })
-    }
-    if (response.status === 404 || response.status >= 500) {
-      return yield* new NotServing({
-        url,
-        status: response.status,
-        detail: `still not serving after ${waited}s. ${response.body.slice(0, 200)}`
-      })
-    }
-    if (response.body !== expectedIndex) {
-      return yield* new NotServing({
-        url,
-        status: response.status,
-        detail: `served ${response.body.length} bytes but we uploaded ${expectedIndex.length}. First 200 served: ${response.body.slice(0, 200)}`
+        status,
+        detail: `served ${body.length} chars but we uploaded ${expectedIndex.length}. First 200: ${body.slice(0, 200)}`
       })
     }
 
     yield* Effect.log(
-      `serving: HTTP 200 after ${waited}s, ${response.body.length} chars, identical to the file we uploaded`
+      `serving: HTTP ${status} after ${waited}s, ${body.length} chars, identical to the file we uploaded`
     )
   })
 
@@ -223,14 +218,16 @@ const program = Effect.gen(function* () {
       message: "usage: bun run smoke <directory> [project-name]"
     })
   }
-  const name = process.argv[3] ?? `deploykit-smoke-${Date.now()}`
+  // Pages names are lowercase alphanumerics and hyphens, and short.
+  const name = process.argv[3] ?? `deploykit-smoke-${Date.now().toString(36)}`
 
   const provider = yield* Provider.DeploymentProvider
+  yield* Effect.log(`provider: ${provider.name}`)
 
   const fs = yield* FileSystem.FileSystem
   const expectedIndex = yield* fs.readFileString(`${directory}/index.html`)
 
-  const artifact = yield* buildOutput(directory)
+  const artifact = yield* buildOutput(directory, target)
   // Any nested file will do; the point is that a subdirectory resolves at all.
   const firstAsset = Artifact.list(artifact)
     .map(entry => entry.path)
@@ -277,7 +274,7 @@ const program = Effect.gen(function* () {
         if (settled.status === "deployed" && settled.url !== undefined) {
           yield* verifyServing(settled.url, expectedIndex)
           if (firstAsset !== undefined) yield* verifyAsset(settled.url, firstAsset)
-          yield* verifyFunction(settled.url)
+          if (target === "vercel") yield* verifyFunction(settled.url)
         }
         return settled
       }),
@@ -296,9 +293,17 @@ const program = Effect.gen(function* () {
   )
 })
 
-// provideMerge, not provide: the program itself reads the directory, so it
-// needs FileSystem too, not only the adapter underneath it.
-const runtime = vercelLayer.pipe(Layer.provideMerge(NodeFileSystem.layer))
+/**
+ * The whole point, in one expression: the program above names no provider.
+ * Swapping this layer is the only difference between deploying to Vercel and
+ * deploying to Cloudflare Pages.
+ *
+ * provideMerge, not provide: the program itself reads the directory, so it
+ * needs FileSystem too, not only the adapter underneath it.
+ */
+const runtime = (target === "cloudflare" ? cloudflareLayer : vercelLayer).pipe(
+  Layer.provideMerge(NodeFileSystem.layer)
+)
 
 const exit = await Effect.runPromiseExit(program.pipe(Effect.provide(runtime)))
 

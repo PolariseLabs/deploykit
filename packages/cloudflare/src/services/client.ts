@@ -24,9 +24,28 @@ export class CloudflareApiError extends Schema.TaggedError<CloudflareApiError>()
     operation: Schema.String,
     statusCode: Schema.optional(Schema.Number),
     body: Schema.optional(Schema.String),
-    retryAfterMs: Schema.optional(Schema.Number)
+    retryAfterMs: Schema.optional(Schema.Number),
+    transient: Schema.optional(Schema.Boolean)
   }
 ) {}
+
+/**
+ * Cloudflare's own internal failures, which arrive as HTTP 200 with
+ * `success: false` and so look permanent to anything classifying on status.
+ *
+ * Observed: a createProject answered "An unknown error occurred. Contact your
+ * account team or Cloudflare support" and the identical request succeeded
+ * seconds later. Code 8000000 is their generic internal error.
+ */
+export const isTransientFailure = (
+  errors: ReadonlyArray<{ readonly code?: number | undefined; readonly message: string }>
+): boolean =>
+  errors.some(
+    error =>
+      error.code === 8000000 ||
+      error.message.includes("An unknown error occurred") ||
+      error.message.includes("internal error")
+  )
 
 /** The fields this adapter reads off a Pages project. */
 export const pagesProject = Schema.Struct({

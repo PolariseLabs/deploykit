@@ -24,6 +24,7 @@ export const toProviderError = (
         ...(cause.statusCode !== undefined ? { statusCode: cause.statusCode } : {}),
         ...(cause.body !== undefined ? { body: cause.body } : {}),
         ...(cause.retryAfterMs !== undefined ? { retryAfterMs: cause.retryAfterMs } : {}),
+        ...(cause.transient === true ? { transient: true } : {}),
         ...context
       })
     : new Provider.ProviderError({

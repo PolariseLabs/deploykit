@@ -12,6 +12,7 @@ import * as Provider from "@deploykit/core/provider"
 import {
   CLOUDFLARE_API,
   CloudflareApiError,
+  isTransientFailure,
   pagesDeployment,
   pagesProject,
   type AssetUpload,
@@ -108,12 +109,15 @@ export const makeCloudflareClient = (config: CloudflareHttpConfig): CloudflareCl
         }
 
         if (!wrapped.value.success) {
-          const detail = (wrapped.value.errors ?? []).map(e => e.message).join("; ")
+          const errors = wrapped.value.errors ?? []
+          const detail = errors.map(e => e.message).join("; ")
           return yield* new CloudflareApiError({
             operation,
             message: `${operation} failed: ${detail || `HTTP ${response.status}`}`,
             statusCode: response.status,
             body: text.slice(0, MAX_BODY),
+            // The status says 200, so nothing downstream could tell.
+            ...(isTransientFailure(errors) ? { transient: true } : {}),
             ...(() => {
               const ms = retryAfterMs(response.headers.get("retry-after"))
               return ms !== undefined ? { retryAfterMs: ms } : {}
