@@ -7,6 +7,7 @@
  */
 
 import { Effect, Option, Schema } from "effect"
+import { Provider } from "@deploykit/core"
 import {
   VERCEL_API,
   VercelApiError,
@@ -38,6 +39,11 @@ export interface VercelHttpConfig {
   readonly baseUrl?: string
   /** Defaults to the global fetch, so a caller can supply their own. */
   readonly fetch?: typeof globalThis.fetch
+  /**
+   * Backoff for transient failures. Pass `{ attempts: 1 }` to disable retrying,
+   * or a zero base delay in tests.
+   */
+  readonly retry?: Provider.RetryOptions
 }
 
 /** Built once: decoding is on the hot path for every poll. */
@@ -48,6 +54,15 @@ export const makeVercelClient = (config: VercelHttpConfig): VercelClient => {
   const baseUrl = config.baseUrl ?? VERCEL_API
   const doFetch = config.fetch ?? globalThis.fetch
   const auth = { Authorization: `Bearer ${config.token}` }
+
+  /**
+   * Reads and content-addressed uploads can be repeated safely. Creates
+   * cannot: a 500 from createDeployment may mean the deployment exists, and
+   * retrying would make a second one. Those retry on a throttle only, where
+   * the provider rejected the request before acting on it.
+   */
+  const retrySafe = Provider.retryIdempotent(config.retry)
+  const retryCreate = Provider.retryThrottleOnly(config.retry)
 
   const url = (path: string, params: Record<string, string> = {}) => {
     const query = new URLSearchParams(params)
@@ -61,33 +76,44 @@ export const makeVercelClient = (config: VercelHttpConfig): VercelClient => {
    * answer, so the error carries no status and `isTransient` treats it as
    * retryable; a non-ok response carries everything the server said.
    */
-  const request = (operation: string, href: string, init?: RequestInit) =>
-    Effect.gen(function* () {
-      const response = yield* Effect.tryPromise({
-        try: () => doFetch(href, init),
-        catch: cause =>
-          new VercelApiError({
-            operation,
-            message: cause instanceof Error ? cause.message : `${operation} could not be sent`
-          })
-      })
+  type Retrier = <A, E extends Provider.RetryableFailure>(
+    effect: Effect.Effect<A, E>
+  ) => Effect.Effect<A, E>
 
-      if (!response.ok) {
-        const body = yield* Effect.promise(() => response.text().catch(() => ""))
-        return yield* new VercelApiError({
-          operation,
-          message: `${operation} failed: HTTP ${response.status}`,
-          statusCode: response.status,
-          body: body.slice(0, MAX_BODY),
-          ...(() => {
-            const ms = retryAfterMs(response.headers.get("retry-after"))
-            return ms !== undefined ? { retryAfterMs: ms } : {}
-          })()
+  const request = (
+    operation: string,
+    href: string,
+    init?: RequestInit,
+    retry: Retrier = retrySafe
+  ) =>
+    retry(
+      Effect.gen(function* () {
+        const response = yield* Effect.tryPromise({
+          try: () => doFetch(href, init),
+          catch: cause =>
+            new VercelApiError({
+              operation,
+              message: cause instanceof Error ? cause.message : `${operation} could not be sent`
+            })
         })
-      }
 
-      return response
-    })
+        if (!response.ok) {
+          const body = yield* Effect.promise(() => response.text().catch(() => ""))
+          return yield* new VercelApiError({
+            operation,
+            message: `${operation} failed: HTTP ${response.status}`,
+            statusCode: response.status,
+            body: body.slice(0, MAX_BODY),
+            ...(() => {
+              const ms = retryAfterMs(response.headers.get("retry-after"))
+              return ms !== undefined ? { retryAfterMs: ms } : {}
+            })()
+          })
+        }
+
+        return response
+      })
+    )
 
   /**
    * Read the body and check its shape before anyone downstream trusts it.
@@ -101,9 +127,10 @@ export const makeVercelClient = (config: VercelHttpConfig): VercelClient => {
     operation: string,
     decode: (input: unknown) => Option.Option<A>,
     href: string,
-    init?: RequestInit
+    init?: RequestInit,
+    retry: Retrier = retrySafe
   ): Effect.Effect<A, VercelApiError> =>
-    request(operation, href, init).pipe(
+    request(operation, href, init, retry).pipe(
       Effect.flatMap(response =>
         Effect.gen(function* () {
           const text = yield* Effect.promise(() => response.text().catch(() => ""))
@@ -140,11 +167,17 @@ export const makeVercelClient = (config: VercelHttpConfig): VercelClient => {
 
   return {
     createProject: name =>
-      json("createProject", decodeProject, url("/v11/projects"), {
-        method: "POST",
-        headers: { ...auth, "Content-Type": "application/json" },
-        body: JSON.stringify({ name })
-      }),
+      json(
+        "createProject",
+        decodeProject,
+        url("/v11/projects"),
+        {
+          method: "POST",
+          headers: { ...auth, "Content-Type": "application/json" },
+          body: JSON.stringify({ name })
+        },
+        retryCreate
+      ),
 
     getProject: idOrName =>
       json("getProject", decodeProject, url(`/v9/projects/${encodeURIComponent(idOrName)}`), {
@@ -198,7 +231,8 @@ export const makeVercelClient = (config: VercelHttpConfig): VercelClient => {
               ? { deploymentId: deployment.deploymentId }
               : {})
           })
-        }
+        },
+        retryCreate
       ),
 
     setProjectAccess: (idOrName, access) => {

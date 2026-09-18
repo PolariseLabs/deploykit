@@ -27,18 +27,3 @@ export class ProviderError extends Schema.TaggedError<ProviderError>()("Provider
   /** Milliseconds the provider asked us to wait, from Retry-After. */
   retryAfterMs: Schema.optional(Schema.Number)
 }) {}
-
-/**
- * Whether retrying could plausibly succeed. Lives beside the error rather than
- * in an adapter so every adapter classifies the same way, and so a caller can
- * ask without knowing which provider produced it.
- */
-export const isTransient = (error: ProviderError): boolean => {
-  const status = error.statusCode
-  if (status !== undefined) {
-    return status === 408 || status === 429 || (status >= 500 && status < 600)
-  }
-  // No status means the request never got an answer: DNS, connection reset,
-  // timeout. Those are the most retryable failures there are.
-  return true
-}
