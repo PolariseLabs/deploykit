@@ -1,3 +1,20 @@
+/**
+ * Pinning a removal. Vercel's createDeployment takes a deploymentId, and a
+ * real deploy showed that naming an existing one creates a SECOND
+ * deployment rather than continuing the first. deploykit does not expose
+ * it, because an option called resume that duplicates is worse than none.
+ */
+it.effect("sends no deploymentId, because naming one would duplicate", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem
+    const stub = stubClient()
+
+    yield* deployToVercelProject(stub.client, fs, "prj_1", Artifact.empty)
+
+    assert.isFalse("deploymentId" in stub.deployRequests[0]!)
+  }).pipe(Effect.provide(NodeFileSystem.layer))
+)
+
 import { assert, describe, it } from "@effect/vitest"
 import { NodeFileSystem } from "@effect/platform-node"
 import { Effect, FileSystem } from "effect"
@@ -380,19 +397,6 @@ describe("the deployment request", () => {
       assert.isFalse("meta" in stub.deployRequests[0]!)
     }).pipe(Effect.provide(NodeFileSystem.layer))
   )
-
-  it.effect("resumes an existing deployment when one is given", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem
-      const stub = stubClient()
-
-      yield* deployToVercelProject(stub.client, fs, "prj_1", Artifact.empty, {
-        resume: "dpl_earlier"
-      })
-
-      assert.strictEqual(stub.deployRequests[0]?.deploymentId, "dpl_earlier")
-    }).pipe(Effect.provide(NodeFileSystem.layer))
-  )
 })
 
 describe("error detail", () => {
@@ -490,21 +494,19 @@ describe("what a caller can control and see", () => {
    * portable contract until now: the adapter supported them, Provider.deploy
    * took only an artifact.
    */
-  it.effect("carries target, meta and resume from the portable options", () =>
+  it.effect("carries target and meta from the portable options", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem
       const stub = stubClient()
 
       yield* deployToVercelProject(stub.client, fs, "prj_1", Artifact.empty, {
         target: "preview",
-        meta: { releaseId: "rel_7" },
-        resume: "dpl_earlier"
+        meta: { releaseId: "rel_7" }
       })
 
       const request = stub.deployRequests[0]!
       assert.strictEqual(request.target, "preview")
       assert.deepStrictEqual(request.meta, { releaseId: "rel_7" })
-      assert.strictEqual(request.deploymentId, "dpl_earlier")
     }).pipe(Effect.provide(NodeFileSystem.layer))
   )
 

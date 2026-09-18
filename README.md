@@ -11,7 +11,9 @@ Built with [Effect](https://effect.website/).
 
 ## Status
 
-Pre-v0.1. Nothing works yet. The scaffold exists; the domain is being written.
+Pre-v0.1, and working. Vercel and Cloudflare Pages both deploy end to end,
+verified against real accounts: an artifact uploads, deploys, and serves
+content byte-identical to what was sent. The API will still move.
 
 ## The idea
 
@@ -32,7 +34,7 @@ supply rather than by rewriting deployment code.
 
 ```typescript
 const program = Effect.gen(function* () {
-  const platform = yield* Platform
+  const platform = yield* Platform.Platform
 
   const app = yield* platform.apps.getOrCreate({
     externalId: "customer-123",
@@ -40,9 +42,27 @@ const program = Effect.gen(function* () {
   })
 
   const artifact = yield* Artifact.fromDirectory("./dist")
+  const started = yield* platform.deploy(app, { artifact, target: "production" })
 
-  return yield* app.deploy({ artifact })
+  return yield* platform.deployments.waitUntilReady(app.id, started.id)
 })
+```
+
+`App` is plain data rather than a handle, so it can be stored and read back;
+deploying is a call on the platform, not a method on the app.
+
+Swapping the provider is swapping the Layer, and nothing above it changes:
+
+```typescript
+program.pipe(Effect.provide(vercelLayer)) // or cloudflareLayer
+```
+
+A terminal status is not the same as a URL that answers. Vercel serves about
+0.4s after reporting ready, Cloudflare Pages about two minutes, so confirming
+that is a separate, opt-in step:
+
+```typescript
+yield * Platform.waitUntilServing(deployment.url)
 ```
 
 ## Principles
@@ -67,13 +87,15 @@ const program = Effect.gen(function* () {
 
 ## Packages
 
-| Package             | Purpose                                                          |
-| ------------------- | ---------------------------------------------------------------- |
-| `@deploykit/core`   | Portable domain: Artifact, App, Deployment, capabilities, errors |
-| `@deploykit/vercel` | Vercel adapter (first real adapter, dogfood target)              |
-| `@deploykit/test`   | In-memory provider for deterministic tests                       |
+| Package                 | Purpose                                                          |
+| ----------------------- | ---------------------------------------------------------------- |
+| `@deploykit/core`       | Portable domain: Artifact, App, Deployment, capabilities, errors |
+| `@deploykit/vercel`     | Vercel adapter (first real adapter, dogfood target)              |
+| `@deploykit/cloudflare` | Cloudflare Pages adapter                                         |
+| `@deploykit/test`       | In-memory provider and app store, for deterministic tests        |
 
-Cloudflare and Netlify adapters come after core survives the first two providers.
+Netlify comes after core survives the first two providers. Domains are deliberately out of
+scope: `@opencoredev/domain-sdk` already covers five providers.
 
 ## Development
 
@@ -90,11 +112,26 @@ automatically.
 
 ## Roadmap
 
-Milestones live in Notion. In short: Artifact first, then the provider contract and a test provider,
-then the Vercel adapter, then the portable `Platform` API, then Cloudflare to attack the abstraction.
+Artifact, the provider contract, a test provider, the Vercel adapter, the portable `Platform` API
+and Cloudflare are all done. Cloudflare did its job: it changed core in four places rather than
+being bent to fit.
 
-The rule when Cloudflare feels unnatural: change core. Do not add adapter hacks to preserve a
-Vercel-shaped API.
+- `getDeployment` takes the app as well as the deployment, because Pages has no endpoint for a
+  deployment id on its own.
+- Digests are keyed by algorithm, because Pages hashes blake3 over base64-plus-extension where
+  Vercel wants sha1 of the bytes.
+- A capability a provider lacks raises `UnsupportedError`, rather than failing somewhere deeper.
+- `isTransient` can be overridden by an adapter, because Cloudflare reports its own internal
+  errors as HTTP 200.
+
+What `DeploymentStatus` did not need was a fifth value: Cloudflare reports a stage and a status,
+five by five, and all twenty-five map onto the same four.
+
+Still open: Pages Functions, the `composeKit` extraction on the consumer side, and a third
+provider to test the abstraction again.
+
+The rule stands. When a provider feels unnatural: change core. Do not add adapter hacks to
+preserve one provider's shape.
 
 ## License
 

@@ -205,9 +205,21 @@ export const makeCloudflareClient = (config: CloudflareHttpConfig): CloudflareCl
         Effect.asVoid
       ),
 
-    createDeployment: (projectName, manifest) => {
+    createDeployment: (projectName, manifest, extras) => {
       const form = new FormData()
       form.append("manifest", JSON.stringify(manifest))
+      if (extras?.workerBundle !== undefined) {
+        form.append("_worker.bundle", new File([extras.workerBundle], "_worker.bundle"))
+      }
+      if (extras?.routes !== undefined) {
+        form.append("_routes.json", new File([JSON.stringify(extras.routes)], "_routes.json"))
+      }
+      if (extras?.headers !== undefined) {
+        form.append("_headers", new File([extras.headers], "_headers"))
+      }
+      if (extras?.redirects !== undefined) {
+        form.append("_redirects", new File([extras.redirects], "_redirects"))
+      }
       return call(
         "createDeployment",
         decodeDeployment,

@@ -79,6 +79,16 @@ export interface AssetUpload {
   readonly base64: true
 }
 
+/** Parts of a deployment that are not assets. */
+export interface DeploymentExtras {
+  /** A serialised Workers upload form, from `workerBundle`. */
+  readonly workerBundle?: Blob
+  /** Which paths the Worker handles; without it, it handles everything. */
+  readonly routes?: unknown
+  readonly headers?: string
+  readonly redirects?: string
+}
+
 export interface CloudflareClient {
   readonly createProject: (name: string) => Effect.Effect<PagesProject, CloudflareApiError>
   readonly getProject: (name: string) => Effect.Effect<PagesProject, CloudflareApiError>
@@ -105,9 +115,14 @@ export interface CloudflareClient {
     hashes: ReadonlyArray<string>
   ) => Effect.Effect<void, CloudflareApiError>
 
-  /** The manifest maps a leading-slash path to the hash holding its bytes. */
+  /**
+   * The manifest maps a leading-slash path to the hash holding its bytes.
+   * `extras` carries the files Pages treats specially rather than as assets:
+   * the Worker bundle, routing and header rules.
+   */
   readonly createDeployment: (
     projectName: string,
-    manifest: Readonly<Record<string, string>>
+    manifest: Readonly<Record<string, string>>,
+    extras?: DeploymentExtras
   ) => Effect.Effect<PagesDeployment, CloudflareApiError>
 }

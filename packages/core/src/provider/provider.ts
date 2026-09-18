@@ -198,14 +198,21 @@ export interface DeployOptions {
    */
   readonly meta?: Readonly<Record<string, string>>
 
-  /**
-   * Continue a deployment that was already started.
+  /*
+   * There is deliberately no `resume`.
    *
-   * The response to a create can be lost while the deployment itself
-   * succeeds: a worker is killed, a gateway times out. Without this the only
-   * recovery is to deploy again and leave the first one orphaned.
+   * It was here, and a real deploy proved it a lie. Vercel's createDeployment
+   * accepts a deploymentId, but naming an existing deployment does NOT
+   * continue it: it creates a second one. Tested directly, two different ids
+   * came back. An option called resume that silently duplicates is worse than
+   * no option, because duplicating is the thing it was meant to prevent.
+   *
+   * Recovering a create whose response was lost is the caller's, using its
+   * own records: tag the deploy with `meta`, keep the id you were given, and
+   * ask `getDeployment` whether it exists. That is what the consumer's
+   * gatewayDeploymentRecovery already does, reading persisted state rather
+   * than asking the provider to sort it out.
    */
-  readonly resume?: string
 
   /** Called as the deploy progresses. Failures here must not fail the deploy. */
   readonly onProgress?: (event: DeployProgress) => Effect.Effect<void>

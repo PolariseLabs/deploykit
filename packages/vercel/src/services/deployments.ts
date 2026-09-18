@@ -106,8 +106,7 @@ export const deployToVercelProject = (
           name: appId,
           files,
           target: options.target ?? "production",
-          ...(options.meta !== undefined ? { meta: options.meta } : {}),
-          ...(options.resume !== undefined ? { deploymentId: options.resume } : {})
+          ...(options.meta !== undefined ? { meta: options.meta } : {})
         })
         .pipe(
           Effect.tap(deployment =>

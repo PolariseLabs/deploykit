@@ -18,6 +18,7 @@ import * as Artifact from "@deploykit/core/artifact"
 import type * as Entry from "@deploykit/core/entry"
 import { CLOUDFLARE_DIGEST, pagesDigest } from "./digest.js"
 import { toDeployment } from "./status.js"
+import { WORKER_PATH, workerBundle } from "./worker.js"
 import { toProviderError } from "./error.js"
 import type { AssetUpload, CloudflareClient } from "./client.js"
 
@@ -56,7 +57,17 @@ export const deployToPagesProject = (
   options: Provider.DeployOptions = {}
 ): Effect.Effect<Provider.Deployment, Provider.ProviderError> =>
   Effect.gen(function* () {
-    const entries = Artifact.list(artifact)
+    /**
+     * `_worker.js` is lifted out rather than uploaded.
+     *
+     * Pages treats it as the Function, not as a file to serve, and an asset
+     * by that name is silently ignored. Taking it from the artifact means a
+     * caller lays out the tree exactly as Pages expects on disk and the
+     * adapter does the rest.
+     */
+    const all = Artifact.list(artifact)
+    const workerEntry = all.find(entry => entry.path === WORKER_PATH)
+    const entries = all.filter(entry => entry.path !== WORKER_PATH)
 
     const report = (event: Provider.DeployProgress) =>
       options.onProgress === undefined
@@ -135,7 +146,24 @@ export const deployToPagesProject = (
      * arbitrary metadata or to continue one that was already started. Ignored
      * rather than faked: a caller reads capabilities, not guesses.
      */
-    const deployment = yield* cloudflare.createDeployment(projectName, manifest)
+    const bundle =
+      workerEntry === undefined
+        ? undefined
+        : yield* bytesOf(fs, workerEntry).pipe(
+            Effect.flatMap(bytes =>
+              Effect.promise(() =>
+                workerBundle({
+                  main: { name: "index.js", content: new TextDecoder().decode(bytes) }
+                })
+              )
+            )
+          )
+
+    const deployment = yield* cloudflare.createDeployment(
+      projectName,
+      manifest,
+      bundle === undefined ? undefined : { workerBundle: bundle }
+    )
     yield* report({ _tag: "Created", deploymentId: deployment.id })
     return toDeployment(deployment, projectName)
   }).pipe(
