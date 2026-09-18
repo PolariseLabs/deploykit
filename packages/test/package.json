@@ -1,0 +1,26 @@
+{
+  "name": "@deploykit/test",
+  "version": "0.0.0",
+  "description": "In-memory test provider for deploykit.",
+  "type": "module",
+  "license": "MIT",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "sideEffects": false,
+  "scripts": {
+    "build": "tsc --build"
+  },
+  "dependencies": {
+    "@deploykit/core": "workspace:*",
+    "effect": "4.0.0-rc.112"
+  }
+}

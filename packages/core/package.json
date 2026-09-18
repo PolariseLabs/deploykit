@@ -1,0 +1,28 @@
+{
+  "name": "@deploykit/core",
+  "version": "0.0.0",
+  "description": "Provider-independent deployment domain: Artifact, App, Deployment, errors, capabilities.",
+  "type": "module",
+  "license": "MIT",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "sideEffects": false,
+  "scripts": {
+    "build": "tsc --build"
+  },
+  "dependencies": {
+    "effect": "4.0.0-rc.112"
+  },
+  "devDependencies": {
+    "@effect/platform-node": "4.0.0-rc.112"
+  }
+}

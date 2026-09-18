@@ -1,0 +1,28 @@
+{
+  "name": "@deploykit/vercel",
+  "version": "1.0.0",
+  "description": "Vercel adapter for DeployKit.",
+  "type": "module",
+  "license": "MIT",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "sideEffects": false,
+  "scripts": {
+    "build": "tsc --build"
+  },
+  "dependencies": {
+    "@deploykit/core": "workspace:*",
+    "@effect/platform-node": "4.0.0-rc.112",
+    "@vercel/sdk": "^1.28.29",
+    "effect": "4.0.0-rc.112"
+  }
+}
