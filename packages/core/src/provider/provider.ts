@@ -1,6 +1,6 @@
 /** The adapter contract. Declared here, implemented by @deploykit/vercel and @deploykit/test. */
 
-import type { Effect } from "effect"
+import type { Effect, Option } from "effect"
 import { Context, Schema } from "effect"
 
 import type { ProviderError } from "./errors.js"
@@ -56,7 +56,9 @@ export class Deployment extends Schema.Class<Deployment>("Deployment")({
   name: deploymentName,
   appId: appId,
   status: deploymentStatus,
-  url: Schema.optional(deploymentUrl)
+  url: Schema.optional(deploymentUrl),
+  /** Why a failed deployment failed, when the provider says. */
+  reason: Schema.optional(Schema.String)
 }) {}
 
 export interface Provider {
@@ -67,6 +69,16 @@ export interface Provider {
 
   /** Resolve an app that already exists. */
   readonly getApp: (id: string) => Effect.Effect<App, ProviderError>
+
+  /**
+   * Resolve an app by name, or None if the provider has none by that name.
+   *
+   * Optional, because a provider that addresses apps only by opaque id cannot
+   * answer it. Where it exists, deploykit can adopt an app whose mapping was
+   * lost, which is the difference between a create that self-heals and one that
+   * leaks a duplicate on every retry. Declare it by implementing it.
+   */
+  readonly findAppByName?: (name: string) => Effect.Effect<Option.Option<App>, ProviderError>
 
   /** Put an artifact into an app.  */
   readonly deploy: (appId: string, artifact: Artifact) => Effect.Effect<Deployment, ProviderError>

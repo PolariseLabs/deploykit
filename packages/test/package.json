@@ -1,6 +1,6 @@
 {
   "name": "@deploykit/test",
-  "version": "0.0.0",
+  "version": "1.0.0",
   "description": "In-memory test provider for deploykit.",
   "type": "module",
   "license": "MIT",

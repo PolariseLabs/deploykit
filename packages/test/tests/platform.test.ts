@@ -1,6 +1,6 @@
 import { assert, describe, it } from "@effect/vitest"
 import { Cause, Effect, Exit, Layer, Schedule } from "effect"
-import { Artifact, Entry, Platform } from "@deploykit/core"
+import { Artifact, Entry, Platform, Provider } from "@deploykit/core"
 import * as TestProvider from "../src/testProvider.ts"
 import * as MemoryAppStore from "../src/memoryAppStore.ts"
 
@@ -253,5 +253,252 @@ describe("waitUntilReady", () => {
 
       assert.strictEqual(again.status, "deployed")
     }).pipe(Effect.provide(live()))
+  )
+})
+
+describe("concurrency", () => {
+  /**
+   * The race: two callers both read "no app yet", so both create one. The store
+   * is the only component that can settle it, because a unique constraint on
+   * externalId is exactly this problem already solved. The loser must end up
+   * with the winner's app and must not leave its own behind.
+   */
+  it.effect("the loser adopts the winner's app instead of creating a second", () =>
+    Effect.gen(function* () {
+      const platform = yield* Platform.Platform
+
+      // The winner gets app-1 and records it.
+      const winner = yield* platform.apps.getOrCreate({ externalId: "winner", name: "winner" })
+
+      // c1's read is stale, so it creates app-2, then discovers app-1 is recorded.
+      const loser = yield* platform.apps.getOrCreate({ externalId: "c1", name: "c1" })
+
+      assert.strictEqual(loser.id, winner.id, "the loser must adopt, not duplicate")
+    }).pipe(Effect.provide(live({}, { raceLostFor: { c1: "app-1" } })))
+  )
+
+  it.effect("the loser deletes the app it redundantly created", () =>
+    Effect.gen(function* () {
+      const platform = yield* Platform.Platform
+      const test = yield* TestProvider.TestProvider
+
+      yield* platform.apps.getOrCreate({ externalId: "winner", name: "winner" })
+      yield* platform.apps.getOrCreate({ externalId: "c1", name: "c1" })
+
+      const state = yield* test.snapshot
+      assert.strictEqual(state.apps.size, 1, "app-2 must have been cleaned up")
+      assert.isTrue(state.apps.has("app-1"))
+      assert.isFalse(state.apps.has("app-2"))
+    }).pipe(Effect.provide(live({}, { raceLostFor: { c1: "app-1" } })))
+  )
+
+  it.effect("the mapping still points at the winner afterwards", () =>
+    Effect.gen(function* () {
+      const platform = yield* Platform.Platform
+      const memory = yield* MemoryAppStore.MemoryAppStore
+
+      yield* platform.apps.getOrCreate({ externalId: "winner", name: "winner" })
+      yield* platform.apps.getOrCreate({ externalId: "c1", name: "c1" })
+
+      assert.strictEqual((yield* memory.snapshot).get("c1"), "app-1")
+    }).pipe(Effect.provide(live({}, { raceLostFor: { c1: "app-1" } })))
+  )
+
+  it.effect("a later call for the loser resolves normally, with no race left", () =>
+    Effect.gen(function* () {
+      const platform = yield* Platform.Platform
+      const test = yield* TestProvider.TestProvider
+
+      yield* platform.apps.getOrCreate({ externalId: "winner", name: "winner" })
+      yield* platform.apps.getOrCreate({ externalId: "c1", name: "c1" })
+      const again = yield* platform.apps.getOrCreate({ externalId: "c1", name: "c1" })
+
+      assert.strictEqual(again.id, "app-1")
+      assert.strictEqual((yield* test.snapshot).apps.size, 1)
+    }).pipe(Effect.provide(live({}, { raceLostFor: { c1: "app-1" } })))
+  )
+})
+
+describe("AppStore contract", () => {
+  it.effect("put stores when nothing is recorded", () =>
+    Effect.gen(function* () {
+      const memory = yield* MemoryAppStore.makeAppStore()
+
+      const outcome = yield* memory.store.put("c1", Provider.appId.make("app-1"))
+
+      assert.strictEqual(outcome._tag, "Stored")
+      assert.strictEqual((yield* memory.snapshot).get("c1"), "app-1")
+    })
+  )
+
+  it.effect("put reports the incumbent rather than overwriting it", () =>
+    Effect.gen(function* () {
+      const memory = yield* MemoryAppStore.makeAppStore()
+      yield* memory.store.put("c1", Provider.appId.make("app-1"))
+
+      const outcome = yield* memory.store.put("c1", Provider.appId.make("app-2"))
+
+      assert.strictEqual(outcome._tag, "AlreadyRecorded")
+      if (outcome._tag === "AlreadyRecorded") {
+        assert.strictEqual(outcome.appId, "app-1")
+      }
+      assert.strictEqual(
+        (yield* memory.snapshot).get("c1"),
+        "app-1",
+        "a second write must not clobber the first"
+      )
+    })
+  )
+})
+
+describe("adopting an orphan", () => {
+  /**
+   * The exact hole compensation could not close: an app was created, recording
+   * the mapping failed, AND the compensating delete failed too. An app now
+   * exists that the store knows nothing about. Without adoption the next call
+   * creates a second one, forever.
+   */
+  const orphaned = live({ failOn: { deleteApp: ["app-1"] } }, { failOn: { put: ["c1"] } })
+
+  it.effect("leaves an orphan when compensation fails, as established", () =>
+    Effect.gen(function* () {
+      const platform = yield* Platform.Platform
+      const test = yield* TestProvider.TestProvider
+
+      yield* Effect.exit(platform.apps.getOrCreate({ externalId: "c1", name: "c1" }))
+
+      assert.strictEqual((yield* test.snapshot).apps.size, 1, "the orphan exists")
+    }).pipe(Effect.provide(orphaned))
+  )
+
+  it.effect("adopts the orphan on the next call instead of creating a duplicate", () =>
+    Effect.gen(function* () {
+      const platform = yield* Platform.Platform
+      const test = yield* TestProvider.TestProvider
+      const memory = yield* MemoryAppStore.MemoryAppStore
+
+      // First call leaks an orphan named c1.
+      yield* Effect.exit(platform.apps.getOrCreate({ externalId: "c1", name: "c1" }))
+      // Second call: the store now accepts writes again.
+      const adopted = yield* platform.apps.getOrCreate({ externalId: "c1", name: "c1" })
+
+      assert.strictEqual(adopted.id, "app-1", "the orphan was adopted")
+      assert.strictEqual((yield* test.snapshot).apps.size, 1, "no duplicate was created")
+      assert.strictEqual((yield* memory.snapshot).get("c1"), "app-1", "and now recorded")
+    }).pipe(
+      Effect.provide(live({ failOn: { deleteApp: ["app-1"] } }, { failOn: { putOnce: ["c1"] } }))
+    )
+  )
+
+  it.effect("does not adopt when no app of that name exists", () =>
+    Effect.gen(function* () {
+      const platform = yield* Platform.Platform
+      const test = yield* TestProvider.TestProvider
+
+      const app = yield* platform.apps.getOrCreate({ externalId: "c1", name: "c1" })
+
+      assert.strictEqual(app.id, "app-1", "a fresh create, not an adoption")
+      assert.strictEqual((yield* test.snapshot).apps.size, 1)
+    }).pipe(Effect.provide(live()))
+  )
+
+  it.effect("does not adopt an app belonging to a different name", () =>
+    Effect.gen(function* () {
+      const platform = yield* Platform.Platform
+
+      yield* platform.apps.getOrCreate({ externalId: "other", name: "other" })
+      const app = yield* platform.apps.getOrCreate({ externalId: "c1", name: "c1" })
+
+      assert.notStrictEqual(app.id, "app-1", "names must not collide across tenants")
+    }).pipe(Effect.provide(live()))
+  )
+})
+
+describe("capabilities", () => {
+  it.effect("reports adoptByName when the provider implements it", () =>
+    Effect.gen(function* () {
+      const platform = yield* Platform.Platform
+      assert.isTrue(platform.capabilities.adoptByName)
+    }).pipe(Effect.provide(live()))
+  )
+
+  it.effect("reports it false when the provider omits the operation", () =>
+    Effect.gen(function* () {
+      const platform = yield* Platform.Platform
+      assert.isFalse(platform.capabilities.adoptByName)
+    }).pipe(Effect.provide(live({ withoutAdoptByName: true })))
+  )
+
+  it.effect("a provider without the capability still creates, it just cannot adopt", () =>
+    Effect.gen(function* () {
+      const platform = yield* Platform.Platform
+      const test = yield* TestProvider.TestProvider
+
+      yield* Effect.exit(platform.apps.getOrCreate({ externalId: "c1", name: "c1" }))
+      yield* Effect.exit(platform.apps.getOrCreate({ externalId: "c1", name: "c1" }))
+
+      assert.strictEqual(
+        (yield* test.snapshot).apps.size,
+        2,
+        "without adoption the duplicate is real, and capabilities says so"
+      )
+    }).pipe(
+      Effect.provide(
+        live(
+          { withoutAdoptByName: true, failOn: { deleteApp: ["app-1", "app-2"] } },
+          { failOn: { put: ["c1"] } }
+        )
+      )
+    )
+  )
+})
+
+describe("adoption, the cases equality of names would hide", () => {
+  /**
+   * Every other test uses externalId === name, so looking the app up by the
+   * wrong one of the two is invisible. Here they differ: the app is named
+   * "pretty", the tenant is "c1", and adoption must search by NAME.
+   */
+  it.effect("looks the orphan up by app name, not by tenant id", () =>
+    Effect.gen(function* () {
+      const test = yield* TestProvider.TestProvider
+      const platform = yield* Platform.Platform
+
+      // An orphan named "pretty", recorded nowhere.
+      yield* test.provider.createApp("pretty")
+
+      const adopted = yield* platform.apps.getOrCreate({ externalId: "c1", name: "pretty" })
+
+      assert.strictEqual(adopted.id, "app-1", "found by name")
+      assert.strictEqual(
+        (yield* test.snapshot).apps.size,
+        1,
+        "searching by tenant id would have found nothing and created a duplicate"
+      )
+    }).pipe(Effect.provide(live()))
+  )
+
+  /**
+   * Adoption can lose the race too: we find an orphan, but between our read and
+   * our write another caller recorded a different app. The winner's app is the
+   * answer, and the orphan must be left alone because we never created it.
+   */
+  it.effect("yields to the winner when recording the adoption conflicts", () =>
+    Effect.gen(function* () {
+      const test = yield* TestProvider.TestProvider
+      const platform = yield* Platform.Platform
+
+      yield* test.provider.createApp("winner") // app-1, the recorded winner
+      yield* test.provider.createApp("c1") // app-2, the orphan we will find
+
+      const resolved = yield* platform.apps.getOrCreate({ externalId: "c1", name: "c1" })
+
+      assert.strictEqual(resolved.id, "app-1", "the winner wins, not the orphan we found")
+      assert.strictEqual(
+        (yield* test.snapshot).apps.size,
+        2,
+        "the orphan stays: we adopted it, we did not create it, so it is not ours to delete"
+      )
+    }).pipe(Effect.provide(live({}, { raceLostFor: { c1: "app-1" } })))
   )
 })

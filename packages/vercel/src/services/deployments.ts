@@ -3,6 +3,7 @@ import { Effect, Match } from "effect"
 import type { VercelClient, VercelDeploymentLike, VercelReadyState } from "./client.js"
 import type { Entry } from "@deploykit/core"
 import { Provider, Artifact } from "@deploykit/core"
+import { toProviderError } from "./error.js"
 import { createHash } from "node:crypto"
 
 const digest = (bytes: Uint8Array) => {
@@ -44,6 +45,7 @@ const toDeployment = (
         : (fallbackAppId ?? "unknown")
     ),
     status: mapReadyState(deployment.readyState),
+    ...(deployment.readyStateReason !== undefined ? { reason: deployment.readyStateReason } : {}),
     url:
       deployment.url !== undefined
         ? Provider.deploymentUrl.make(`https://${deployment.url}`)
@@ -63,28 +65,26 @@ export const uploadFile = (vercel: VercelClient, fs: FileSystem.FileSystem, entr
 
     const { sha, size } = digest(bytes)
 
-    yield* Effect.tryPromise({
-      try: () =>
-        vercel.deployments.uploadFile({
-          contentLength: size,
-          xVercelDigest: sha,
-          requestBody: bytes
-        }),
-      catch: error =>
-        new Provider.ProviderError({
-          message: error instanceof Error ? error.message : "Unknown error",
-          provider: "vercel"
-        })
-    })
+    yield* vercel.uploadFile(sha, bytes).pipe(Effect.mapError(cause => toProviderError(cause)))
     return { file: entry.path, sha, size }
   })
+
+/** What a caller can vary about one deployment. */
+export interface DeployRequestOptions {
+  /** Defaults to production, as a publish normally means the live slot. */
+  readonly target?: "production" | "preview"
+  /** Carried through to Vercel, for linking a deployment back to a release. */
+  readonly meta?: Readonly<Record<string, string>>
+  /** Continues an existing deployment rather than starting a new one. */
+  readonly deploymentId?: string
+}
 
 export const deployToVercelProject = (
   vercel: VercelClient,
   fs: FileSystem.FileSystem,
   appId: string,
   artifact: Artifact.Artifact,
-  existingDeploymentId?: string
+  options: DeployRequestOptions = {}
 ): Effect.Effect<Provider.Deployment, Provider.ProviderError> =>
   Effect.gen(function* () {
     const files = yield* Effect.forEach(
@@ -95,43 +95,26 @@ export const deployToVercelProject = (
       }
     )
 
-    const deployment = yield* Effect.tryPromise({
-      try: () =>
-        vercel.deployments.createDeployment({
-          requestBody: {
-            project: appId,
-            name: appId,
-            files,
-            ...(existingDeploymentId !== undefined ? { deploymentId: existingDeploymentId } : {})
-          }
-        }),
-      catch: cause =>
-        new Provider.ProviderError({
-          message: cause instanceof Error ? cause.message : "Unknown error",
-          provider: "vercel",
-          appId
-        })
-    })
+    const deployment = yield* vercel
+      .createDeployment({
+        projectId: appId,
+        name: appId,
+        files,
+        target: options.target ?? "production",
+        ...(options.meta !== undefined ? { meta: options.meta } : {}),
+        ...(options.deploymentId !== undefined ? { deploymentId: options.deploymentId } : {})
+      })
+      .pipe(Effect.mapError(cause => toProviderError(cause, { appId })))
 
     return toDeployment(deployment, appId)
   }).pipe(
     Effect.catchTags({
-      PlatformError: cause =>
-        new Provider.ProviderError({
-          message: cause instanceof Error ? cause.message : "Unknown error",
-          provider: "vercel",
-          appId
-        })
+      PlatformError: cause => toProviderError(cause, { appId })
     })
   )
 
 export const getDeployment = (vercel: VercelClient, deploymentId: string) =>
-  Effect.tryPromise({
-    try: () => vercel.deployments.getDeployment({ idOrUrl: deploymentId }),
-    catch: cause =>
-      new Provider.ProviderError({
-        message: cause instanceof Error ? cause.message : "Unknown error",
-        provider: "vercel",
-        deploymentId
-      })
-  }).pipe(Effect.map(deployment => toDeployment(deployment)))
+  vercel.getDeployment(deploymentId).pipe(
+    Effect.map(deployment => toDeployment(deployment)),
+    Effect.mapError(cause => toProviderError(cause, { deploymentId }))
+  )

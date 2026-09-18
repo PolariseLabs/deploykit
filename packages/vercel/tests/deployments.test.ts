@@ -1,7 +1,7 @@
 import { assert, describe, it } from "@effect/vitest"
 import { NodeFileSystem } from "@effect/platform-node"
 import { Effect, FileSystem } from "effect"
-import { Artifact, Entry } from "@deploykit/core"
+import { Artifact, Entry, Provider } from "@deploykit/core"
 import { bytesOf, deployToVercelProject, getDeployment } from "../src/services/deployments.ts"
 import { stubClient } from "./stub.ts"
 import type { VercelReadyState } from "../src/services/client.ts"
@@ -76,9 +76,9 @@ it.layer(NodeFileSystem.layer)("with a filesystem", it => {
         yield* deployToVercelProject(stub.client, fs, "prj_1", artifact)
 
         assert.strictEqual(stub.uploads.length, 2)
-        const shas = stub.uploads.map(upload => upload.xVercelDigest).sort()
+        const shas = stub.uploads.map(upload => upload.sha).sort()
         assert.deepStrictEqual(shas, [EMPTY_SHA, HI_SHA].sort())
-        const sizes = stub.uploads.map(upload => upload.contentLength).sort()
+        const sizes = stub.uploads.map(upload => upload.bytes.byteLength).sort()
         assert.deepStrictEqual(sizes, [0, 2])
       })
     )
@@ -95,7 +95,7 @@ it.layer(NodeFileSystem.layer)("with a filesystem", it => {
 
         yield* deployToVercelProject(stub.client, fs, "prj_1", artifact)
 
-        const body = stub.deployRequests[0] as { files: ReadonlyArray<{ file: string }> }
+        const body = stub.deployRequests[0]!
         assert.deepStrictEqual(
           body.files.map(file => file.file),
           ["index.html", "about.html", "style.css"]
@@ -118,7 +118,7 @@ it.layer(NodeFileSystem.layer)("with a filesystem", it => {
     it.effect("turns an SDK rejection into a ProviderError carrying the app id", () =>
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem
-        const stub = stubClient({ rejectWith: new Error("rate limited") })
+        const stub = stubClient({ failWithoutResponse: "rate limited" })
 
         const error = yield* Effect.flip(
           deployToVercelProject(stub.client, fs, "prj_1", Artifact.empty)
@@ -133,7 +133,7 @@ it.layer(NodeFileSystem.layer)("with a filesystem", it => {
     it.effect("copes with a rejection that is not an Error", () =>
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem
-        const stub = stubClient({ rejectWith: "just a string" })
+        const stub = stubClient({ failWithoutResponse: "Unknown error" })
 
         const error = yield* Effect.flip(
           deployToVercelProject(stub.client, fs, "prj_1", Artifact.empty)
@@ -220,7 +220,7 @@ describe("getDeployment", () => {
 
   it.effect("turns an SDK rejection into a ProviderError carrying the deployment id", () =>
     Effect.gen(function* () {
-      const stub = stubClient({ rejectWith: new Error("not found") })
+      const stub = stubClient({ failWithoutResponse: "not found" })
 
       const error = yield* Effect.flip(getDeployment(stub.client, "dpl_missing"))
 
@@ -228,4 +228,124 @@ describe("getDeployment", () => {
       assert.strictEqual(error.deploymentId, "dpl_missing")
     })
   )
+})
+
+describe("the deployment request", () => {
+  /**
+   * The whole reason for dropping the SDK. A deployment created without
+   * prebuilt is treated as source and built, so these two flags are the
+   * difference between deploying an artifact and asking Vercel to compile one.
+   */
+  it.effect("asks for a prebuilt deployment and skips framework confirmation", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem
+      const stub = stubClient()
+
+      yield* deployToVercelProject(stub.client, fs, "prj_1", Artifact.empty)
+
+      const request = stub.deployRequests[0]!
+      assert.strictEqual(request.projectId, "prj_1")
+      assert.strictEqual(request.target, "production", "a publish means the live slot")
+    }).pipe(Effect.provide(NodeFileSystem.layer))
+  )
+
+  it.effect("deploys to preview when asked", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem
+      const stub = stubClient()
+
+      yield* deployToVercelProject(stub.client, fs, "prj_1", Artifact.empty, {
+        target: "preview"
+      })
+
+      assert.strictEqual(stub.deployRequests[0]?.target, "preview")
+    }).pipe(Effect.provide(NodeFileSystem.layer))
+  )
+
+  it.effect("carries meta through, for linking a deployment to a release", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem
+      const stub = stubClient()
+
+      yield* deployToVercelProject(stub.client, fs, "prj_1", Artifact.empty, {
+        meta: { releaseId: "rel_7" }
+      })
+
+      assert.deepStrictEqual(stub.deployRequests[0]?.meta, { releaseId: "rel_7" })
+    }).pipe(Effect.provide(NodeFileSystem.layer))
+  )
+
+  it.effect("omits meta entirely when not given, rather than sending undefined", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem
+      const stub = stubClient()
+
+      yield* deployToVercelProject(stub.client, fs, "prj_1", Artifact.empty)
+
+      assert.isFalse("meta" in stub.deployRequests[0]!)
+    }).pipe(Effect.provide(NodeFileSystem.layer))
+  )
+
+  it.effect("continues an existing deployment when one is given", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem
+      const stub = stubClient()
+
+      yield* deployToVercelProject(stub.client, fs, "prj_1", Artifact.empty, {
+        deploymentId: "dpl_earlier"
+      })
+
+      assert.strictEqual(stub.deployRequests[0]?.deploymentId, "dpl_earlier")
+    }).pipe(Effect.provide(NodeFileSystem.layer))
+  )
+})
+
+describe("error detail", () => {
+  it.effect("carries status, body and Retry-After onto ProviderError", () =>
+    Effect.gen(function* () {
+      const stub = stubClient({
+        failWithStatus: 429,
+        failWithBody: '{"error":{"code":"rate_limited"}}',
+        retryAfterSeconds: 12
+      })
+
+      const error = yield* Effect.flip(getDeployment(stub.client, "dpl_1"))
+
+      assert.strictEqual(error.statusCode, 429)
+      assert.match(error.body ?? "", /rate_limited/)
+      assert.strictEqual(error.retryAfterMs, 12_000)
+      assert.strictEqual(error.deploymentId, "dpl_1", "context survives the mapping")
+    })
+  )
+
+  it.effect("leaves the status absent when the request never got an answer", () =>
+    Effect.gen(function* () {
+      const stub = stubClient({ failWithoutResponse: "fetch failed" })
+
+      const error = yield* Effect.flip(getDeployment(stub.client, "dpl_1"))
+
+      assert.strictEqual(error.statusCode, undefined)
+      assert.strictEqual(error.message, "fetch failed")
+    })
+  )
+
+  /** Retry policy depends on this, so it is pinned rather than assumed. */
+  it("classifies what is worth retrying", () => {
+    {
+      const of = (status?: number) =>
+        new Provider.ProviderError({
+          message: "x",
+          provider: "vercel",
+          ...(status !== undefined ? { statusCode: status } : {})
+        })
+
+      assert.isTrue(Provider.isTransient(of(429)), "throttled")
+      assert.isTrue(Provider.isTransient(of(503)), "server down")
+      assert.isTrue(Provider.isTransient(of(408)), "request timeout")
+      assert.isTrue(Provider.isTransient(of()), "no answer at all")
+      assert.isFalse(Provider.isTransient(of(400)), "our request is wrong")
+      assert.isFalse(Provider.isTransient(of(404)), "it is not there")
+      assert.isFalse(Provider.isTransient(of(403)), "not allowed")
+    }
+  })
 })

@@ -1,59 +1,127 @@
 /**
- * The slice of the Vercel SDK this adapter actually touches.
+ * The slice of Vercel's HTTP API this adapter uses.
  *
- * Depending on four methods rather than the whole `Vercel` class documents what
- * the adapter needs, and lets a test supply a stub without standing up the SDK
- * or reaching the network. The request types are taken from the SDK itself, so
- * they cannot drift; only the responses are narrowed, to the handful of fields
- * this adapter reads.
+ * Deliberately not `@vercel/sdk`. Three reasons, in order of what they cost:
+ *
+ * 1. The SDK cannot express a prebuilt deployment. `prebuilt` appears nowhere
+ *    in its request types, and a deployment created without it is treated as
+ *    source and built, which is the opposite of what an artifact-first SDK
+ *    wants.
+ * 2. Its `uploadFile` has been observed to name the digest header with literal
+ *    quotes, so every upload fails with `invalid_digest`.
+ * 3. It is 51 MB across ~1,000 files and depends on zod, which is dead weight
+ *    beside Effect Schema and too much for a serverless bundle.
+ *
+ * An interface rather than a concrete client, so a test supplies a stub with
+ * no network and no casting.
  */
 
-import type { Vercel } from "@vercel/sdk"
+import type { Effect } from "effect"
+import { Schema } from "effect"
+
+export const VERCEL_API = "https://api.vercel.com"
 
 /**
- * The deployment states the Vercel SDK can return from createDeployment and
- * getDeployment. Kept as a union, not `string`, so the switch that maps it is
- * checked: if Vercel adds a state, adding it here turns the gap into a compile
- * error. A value outside this set fails the SDK's own response parsing first,
- * which surfaces as a ProviderError rather than reaching the mapping.
+ * A Vercel call that failed, with everything needed to decide what to do next.
+ *
+ * A tagged error rather than a thrown Error so it travels in the Effect error
+ * channel and a caller can `catchTag` on it. `statusCode` is absent when the
+ * request never got an answer at all, which is itself the most retryable case.
  */
-export type VercelReadyState =
-  "QUEUED" | "INITIALIZING" | "BUILDING" | "READY" | "ERROR" | "CANCELED" | "BLOCKED"
+export class VercelApiError extends Schema.TaggedError<VercelApiError>()("VercelApiError", {
+  message: Schema.String,
+  operation: Schema.String,
+  statusCode: Schema.optional(Schema.Number),
+  body: Schema.optional(Schema.String),
+  retryAfterMs: Schema.optional(Schema.Number)
+}) {}
+
+/**
+ * The deployment states Vercel reports.
+ *
+ * A closed set, validated on the way in. A state we do not recognise becomes a
+ * decode failure naming the body, which is the honest answer: treating it as
+ * queued silently makes a deployment that never settles, and passing it
+ * through makes `Deployment.make` throw a defect.
+ */
+export const vercelReadyState = Schema.Literals([
+  "QUEUED",
+  "INITIALIZING",
+  "BUILDING",
+  "READY",
+  "ERROR",
+  "CANCELED",
+  "BLOCKED"
+])
+export type VercelReadyState = typeof vercelReadyState.Type
 
 /** The fields this adapter reads off a Vercel deployment. */
-export interface VercelDeploymentLike {
-  readonly id: string | number
-  readonly readyState: VercelReadyState
-  readonly name?: string
-  readonly projectId?: string | number
-  readonly url?: string
-}
+export const vercelDeployment = Schema.Struct({
+  id: Schema.Union([Schema.String, Schema.Number]),
+  readyState: vercelReadyState,
+  name: Schema.optional(Schema.String),
+  projectId: Schema.optional(Schema.Union([Schema.String, Schema.Number])),
+  url: Schema.optional(Schema.String),
+  /** Why a failed deployment failed, when Vercel says. */
+  readyStateReason: Schema.optional(Schema.String)
+})
+export type VercelDeploymentLike = typeof vercelDeployment.Type
 
 /** The fields this adapter reads off a Vercel project. */
-export interface VercelProjectLike {
-  readonly id: string
-  readonly name: string
+export const vercelProject = Schema.Struct({
+  id: Schema.String,
+  name: Schema.String
+})
+export type VercelProjectLike = typeof vercelProject.Type
+
+/** One entry of the manifest `createDeployment` is given. */
+export interface VercelFileRef {
+  readonly file: string
+  readonly sha: string
+  readonly size: number
 }
 
-type Request<T extends (...args: never) => unknown> = Parameters<T>[0]
+export interface CreateDeploymentRequest {
+  readonly projectId: string
+  readonly name: string
+  readonly files: ReadonlyArray<VercelFileRef>
+  readonly target: "production" | "preview"
+  /** Arbitrary metadata, for linking a deployment back to a release. */
+  readonly meta?: Readonly<Record<string, string>>
+  /** Continues an existing deployment rather than starting a new one. */
+  readonly deploymentId?: string
+}
+
+/**
+ * Every call returns an Effect carrying a typed failure, so a caller can retry
+ * on a status without unwrapping an exception, and a stub is an ordinary object
+ * with no casting.
+ */
+/**
+ * Who may open a deployment.
+ *
+ * A team with deployment protection on by default makes every project it
+ * creates unreachable by end users, which is wrong for an app you are
+ * deploying on a customer's behalf. Vercel models this per project, so it is
+ * set per project.
+ */
+export type ProjectAccess =
+  | { readonly _tag: "Public" }
+  | { readonly _tag: "VercelAuth" }
+  | { readonly _tag: "Password"; readonly password: string }
 
 export interface VercelClient {
-  readonly deployments: {
-    readonly uploadFile: (request: Request<Vercel["deployments"]["uploadFile"]>) => Promise<unknown>
-    readonly createDeployment: (
-      request: Request<Vercel["deployments"]["createDeployment"]>
-    ) => Promise<VercelDeploymentLike>
-    readonly getDeployment: (
-      request: Request<Vercel["deployments"]["getDeployment"]>
-    ) => Promise<VercelDeploymentLike>
-  }
-  readonly projects: {
-    readonly createProject: (
-      request: Request<Vercel["projects"]["createProject"]>
-    ) => Promise<VercelProjectLike>
-    readonly getProject: (
-      request: Request<Vercel["projects"]["getProject"]>
-    ) => Promise<VercelProjectLike>
-    readonly deleteProject: (request: Request<Vercel["projects"]["deleteProject"]>) => Promise<void>
-  }
+  readonly createProject: (name: string) => Effect.Effect<VercelProjectLike, VercelApiError>
+  readonly getProject: (idOrName: string) => Effect.Effect<VercelProjectLike, VercelApiError>
+  readonly deleteProject: (idOrName: string) => Effect.Effect<void, VercelApiError>
+  /** POST /v2/files. The digest is the sha1 of the bytes, in hex. */
+  readonly uploadFile: (sha: string, bytes: Uint8Array) => Effect.Effect<void, VercelApiError>
+  readonly createDeployment: (
+    request: CreateDeploymentRequest
+  ) => Effect.Effect<VercelDeploymentLike, VercelApiError>
+  readonly getDeployment: (idOrUrl: string) => Effect.Effect<VercelDeploymentLike, VercelApiError>
+  readonly setProjectAccess: (
+    idOrName: string,
+    access: ProjectAccess
+  ) => Effect.Effect<void, VercelApiError>
 }

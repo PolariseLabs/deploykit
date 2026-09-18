@@ -8,7 +8,7 @@
  * for.
  */
 
-import { Context, Effect, Layer, Ref } from "effect"
+import { Context, Effect, Layer, Option, Ref } from "effect"
 import type { Artifact } from "@deploykit/core"
 import { Provider } from "@deploykit/core"
 
@@ -31,6 +31,11 @@ export interface TestProviderConfig {
    * build that hangs, which is what a poller's bound exists to survive.
    */
   readonly neverFinish?: ReadonlyArray<string>
+  /**
+   * Omit findAppByName, so the provider declares it cannot adopt by name. Models
+   * a provider that addresses apps only by opaque id.
+   */
+  readonly withoutAdoptByName?: boolean
 }
 
 /** What the provider kept about one deployment, including the files it was handed. */
@@ -167,6 +172,12 @@ export const make = (config: TestProviderConfig = {}): Effect.Effect<TestProvide
         return app === undefined ? yield* failure(`no app "${id}"`, { appId: id }) : app
       })
 
+    const findAppByName = (name: string) =>
+      Effect.gen(function* () {
+        const { apps } = yield* Ref.get(state)
+        return Option.fromUndefinedOr(Array.from(apps.values()).find(app => app.name === name))
+      })
+
     const deleteApp = (id: string) =>
       Effect.gen(function* () {
         if (failDeleteApp.has(id)) {
@@ -260,15 +271,20 @@ export const make = (config: TestProviderConfig = {}): Effect.Effect<TestProvide
           : record.artifact
       })
 
+    const base = {
+      name: "test",
+      createApp,
+      getApp,
+      deleteApp,
+      deploy,
+      getDeployment
+    }
+
     return {
-      provider: {
-        name: "test",
-        createApp,
-        getApp,
-        deleteApp,
-        deploy,
-        getDeployment
-      },
+      // Spread rather than a property set to undefined: with
+      // exactOptionalPropertyTypes, absent and undefined are different things,
+      // and capabilitiesOf asks whether the key is absent.
+      provider: config.withoutAdoptByName === true ? base : { ...base, findAppByName },
       snapshot: Ref.get(state),
       artifactFor
     }

@@ -1,30 +1,75 @@
-import { Effect, Layer, Config, Redacted } from "effect"
+import { Config, Effect, FileSystem, Layer, Redacted } from "effect"
 import { Provider } from "@deploykit/core"
-import { createVercelProject, deleteVercelProject, getVercelProject } from "./services/app.js"
+import {
+  createVercelProject,
+  deleteVercelProject,
+  findVercelProjectByName,
+  getVercelProject
+} from "./services/app.js"
 import { deployToVercelProject, getDeployment } from "./services/deployments.js"
-import { FileSystem } from "effect"
-import { NodeFileSystem } from "@effect/platform-node"
-import { Vercel } from "@vercel/sdk"
+import { makeVercelClient } from "./services/http.js"
+import type { VercelClient } from "./services/client.js"
+
+/**
+ * The Vercel adapter, configured from the environment.
+ *
+ * Two deliberate choices about what this layer does NOT do.
+ *
+ * It provides no platform layer. An adapter should not pick the caller's
+ * runtime, so `FileSystem` stays in this layer's requirements and the caller
+ * supplies `NodeFileSystem.layer` on Node, or any implementation elsewhere.
+ * Only `File` entries ever reach it.
+ *
+ * It reads config rather than taking it, which suits an application. A caller
+ * that already holds a token, or wants a different base URL or fetch, builds
+ * the client with `makeVercelClient` and uses `layerWith`.
+ */
 export const vercelLayer = Layer.effect(
   Provider.DeploymentProvider,
   Effect.gen(function* () {
-    const fs = yield* FileSystem.FileSystem
+    // VERCEL_TOKEN is Vercel's own convention, so it wins; VERCEL_API_KEY is
+    // accepted because plenty of setups already use that name.
+    const token = yield* Config.redacted("VERCEL_TOKEN").pipe(
+      Config.orElse(() => Config.redacted("VERCEL_API_KEY"))
+    )
+    const teamId = yield* Config.option(Config.string("VERCEL_TEAM_ID"))
 
-    const token = yield* Config.redacted("VERCEL_TOKEN")
-
-    const vercel = new Vercel({
-      bearerToken: Redacted.value(token)
-    })
-
-    return {
-      name: "Vercel",
-      createApp: name => createVercelProject(vercel, name),
-      getApp: id => getVercelProject(vercel, id),
-      deleteApp: id => deleteVercelProject(vercel, id),
-      deploy: (appId, artifact) => deployToVercelProject(vercel, fs, appId, artifact),
-      getDeployment: id => getDeployment(vercel, id)
-    } satisfies Provider.Provider
+    return makeProvider(
+      makeVercelClient({
+        token: Redacted.value(token),
+        ...(teamId._tag === "Some" ? { teamId: teamId.value } : {})
+      }),
+      yield* FileSystem.FileSystem
+    )
   })
-).pipe(Layer.provide(NodeFileSystem.layer))
+)
 
-export type { VercelClient, VercelDeploymentLike, VercelProjectLike } from "./services/client.js"
+/** The same adapter over a client the caller built. The escape hatch, and how tests wire it. */
+export const layerWith = (client: VercelClient) =>
+  Layer.effect(
+    Provider.DeploymentProvider,
+    Effect.map(FileSystem.FileSystem, fs => makeProvider(client, fs))
+  )
+
+const makeProvider = (vercel: VercelClient, fs: FileSystem.FileSystem): Provider.Provider => ({
+  name: "Vercel",
+  createApp: name => createVercelProject(vercel, name),
+  getApp: id => getVercelProject(vercel, id),
+  deleteApp: id => deleteVercelProject(vercel, id),
+  findAppByName: name => findVercelProjectByName(vercel, name),
+  deploy: (appId, artifact) => deployToVercelProject(vercel, fs, appId, artifact),
+  getDeployment: id => getDeployment(vercel, id)
+})
+
+export { makeVercelClient } from "./services/http.js"
+export type { VercelHttpConfig } from "./services/http.js"
+export { VercelApiError } from "./services/client.js"
+export type {
+  CreateDeploymentRequest,
+  VercelClient,
+  VercelDeploymentLike,
+  VercelFileRef,
+  VercelProjectLike,
+  VercelReadyState
+} from "./services/client.js"
+export type { DeployRequestOptions } from "./services/deployments.js"

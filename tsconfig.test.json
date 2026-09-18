@@ -10,5 +10,5 @@
     "rewriteRelativeImportExtensions": false,
     "types": ["node"]
   },
-  "include": ["packages/*/tests/**/*.ts", "vitest.config.ts", "eslint.config.js"]
+  "include": ["packages/*/tests/**/*.ts", "vitest.config.ts", "eslint.config.js", "scripts/**/*.ts"]
 }
