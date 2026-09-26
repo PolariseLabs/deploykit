@@ -1,18 +1,3 @@
-/**
- * The Cloudflare Pages control plane, carrying no deploy code.
- *
- * Same shape as the Vercel adapter's, and for the same reason: everything
- * here is a small HTTP call, while deploying moves a tree of bytes and pulls
- * in a hasher.
- *
- * Note what is absent. There is no `setAccess`, so `accessModes` is empty and
- * `capabilitiesOf` reports the capability as unavailable. Cloudflare protects
- * preview deployments through Cloudflare Access policies, which is not the
- * same shape as Vercel's per-project password or SSO toggle. Rather than
- * pretend, the adapter declares it does not do it, and Platform refuses with
- * UnsupportedError instead of failing somewhere deeper.
- */
-
 import { Config, Effect, Layer, Redacted } from "effect"
 import * as Provider from "@deploykit/core/provider"
 import {
@@ -27,6 +12,7 @@ import type { CloudflareClient } from "./services/client.js"
 
 export const makeCloudflareControl = (cloudflare: CloudflareClient): Provider.ControlPlane => ({
   name: "Cloudflare Pages",
+  previewDeployments: cloudflare.previewBranch !== undefined,
   createApp: name => createPagesProject(cloudflare, name),
   getApp: id => getPagesProject(cloudflare, id),
   deleteApp: id => deletePagesProject(cloudflare, id),
@@ -51,3 +37,8 @@ export const cloudflareControlLayer = Layer.effect(
 
 export const controlLayerWith = (client: CloudflareClient) =>
   Layer.succeed(Provider.DeploymentControl, makeCloudflareControl(client))
+
+export { makeCloudflareClient } from "./services/http.js"
+export type { CloudflareHttpConfig } from "./services/http.js"
+export { CloudflareApiError } from "./services/client.js"
+export type { CloudflareClient } from "./services/client.js"

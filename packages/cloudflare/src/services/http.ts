@@ -1,12 +1,7 @@
-/**
- * The live CloudflareClient: fetch, no SDK, Effect all the way out.
- *
- * The one structural difference from the Vercel client is the envelope.
- * Cloudflare answers `{ success, errors, result }` and will return HTTP 200
- * with `success: false`, so checking the status code alone reports a failure
- * as a success. Unwrapping happens here once.
- */
+import * as Telemetry from "@deploykit/core/telemetry"
+import { fetchText, safeBody, retryAfter } from "@deploykit/core/http"
 
+import type { Scope } from "effect"
 import { Effect, Option, Schema } from "effect"
 import * as Provider from "@deploykit/core/provider"
 import {
@@ -18,8 +13,6 @@ import {
   type AssetUpload,
   type CloudflareClient
 } from "./client.js"
-
-const MAX_BODY = 2000
 
 const envelope = Schema.Struct({
   success: Schema.Boolean,
@@ -34,20 +27,14 @@ const decodeDeployment = Schema.decodeUnknownOption(pagesDeployment)
 const decodeHashes = Schema.decodeUnknownOption(Schema.Array(Schema.String))
 const decodeToken = Schema.decodeUnknownOption(Schema.Struct({ jwt: Schema.String }))
 
-const retryAfterMs = (header: string | null): number | undefined => {
-  if (header === null) return undefined
-  const seconds = Number(header)
-  if (Number.isFinite(seconds) && seconds >= 0) return seconds * 1000
-  const at = Date.parse(header)
-  return Number.isNaN(at) ? undefined : Math.max(0, at - Date.now())
-}
-
 export interface CloudflareHttpConfig {
   readonly apiToken: string
   readonly accountId: string
   readonly baseUrl?: string
   readonly fetch?: typeof globalThis.fetch
   readonly retry?: Provider.RetryOptions
+  readonly timeoutMs?: number
+  readonly previewBranch?: string
 }
 
 export const makeCloudflareClient = (config: CloudflareHttpConfig): CloudflareClient => {
@@ -56,86 +43,106 @@ export const makeCloudflareClient = (config: CloudflareHttpConfig): CloudflareCl
   const account = `/accounts/${encodeURIComponent(config.accountId)}`
 
   const retrySafe = Provider.retryIdempotent(config.retry)
-  const retryCreate = Provider.retryThrottleOnly(config.retry)
+  const retryCreate = <A, E>(effect: Effect.Effect<A, E>) => effect
 
   type Retrier = <A, E extends Provider.RetryableFailure>(
     effect: Effect.Effect<A, E>
   ) => Effect.Effect<A, E>
 
-  /**
-   * One request, unwrapped. `success: false` is a failure whatever the status
-   * code says, and the messages Cloudflare puts in `errors` are the only
-   * useful part of the response when something is wrong.
-   */
   const call = <A>(
     operation: string,
     decode: (input: unknown) => Option.Option<A>,
     path: string,
-    init: RequestInit,
+    init: RequestInit | Effect.Effect<RequestInit, never, Scope.Scope>,
     retry: Retrier = retrySafe
   ): Effect.Effect<A, CloudflareApiError> =>
     retry(
-      Effect.gen(function* () {
-        const response = yield* Effect.tryPromise({
-          try: () => doFetch(`${baseUrl}${path}`, init),
-          catch: cause =>
-            new CloudflareApiError({
-              operation,
-              message: cause instanceof Error ? cause.message : `${operation} could not be sent`
-            })
-        })
-
-        const text = yield* Effect.promise(() => response.text().catch(() => ""))
-        const parsed = ((): unknown => {
-          try {
-            return JSON.parse(text)
-          } catch {
-            return undefined
-          }
-        })()
-
-        const wrapped = decodeEnvelope(parsed)
-        if (Option.isNone(wrapped)) {
-          return yield* new CloudflareApiError({
-            operation,
-            message: `${operation} returned a body deploykit does not recognise`,
-            statusCode: response.status,
-            body: text.slice(0, MAX_BODY),
-            ...(() => {
-              const ms = retryAfterMs(response.headers.get("retry-after"))
-              return ms !== undefined ? { retryAfterMs: ms } : {}
+      Telemetry.observe(
+        "cloudflare",
+        operation,
+        Effect.scoped(
+          Effect.gen(function* () {
+            const options = Effect.isEffect(init) ? yield* init : init
+            const { response, text } = yield* fetchText(doFetch, `${baseUrl}${path}`, options).pipe(
+              Effect.mapError(
+                () =>
+                  new CloudflareApiError({ operation, message: `${operation} transport failed` })
+              )
+            )
+            const parsed = ((): unknown => {
+              try {
+                return JSON.parse(text)
+              } catch {
+                return undefined
+              }
             })()
-          })
-        }
 
-        if (!wrapped.value.success) {
-          const errors = wrapped.value.errors ?? []
-          const detail = errors.map(e => e.message).join("; ")
-          return yield* new CloudflareApiError({
-            operation,
-            message: `${operation} failed: ${detail || `HTTP ${response.status}`}`,
-            statusCode: response.status,
-            body: text.slice(0, MAX_BODY),
-            // The status says 200, so nothing downstream could tell.
-            ...(isTransientFailure(errors) ? { transient: true } : {}),
-            ...(() => {
-              const ms = retryAfterMs(response.headers.get("retry-after"))
-              return ms !== undefined ? { retryAfterMs: ms } : {}
-            })()
-          })
-        }
+            const wrapped = decodeEnvelope(parsed)
+            if (Option.isNone(wrapped)) {
+              return yield* new CloudflareApiError({
+                operation,
+                message: `${operation} returned a body deploykit does not recognise`,
+                statusCode: response.status,
+                ...(response.headers.get("cf-ray") === null
+                  ? {}
+                  : { requestId: response.headers.get("cf-ray")! }),
+                body: safeBody(text),
+                ...(() => {
+                  const ms = retryAfter(response.headers.get("retry-after"))
+                  return ms !== undefined ? { retryAfterMs: ms } : {}
+                })()
+              })
+            }
 
-        const value = decode(wrapped.value.result)
-        if (Option.isNone(value)) {
-          return yield* new CloudflareApiError({
-            operation,
-            message: `${operation} returned a result deploykit does not recognise`,
-            statusCode: response.status,
-            body: text.slice(0, MAX_BODY)
+            if (!response.ok || !wrapped.value.success) {
+              const errors = wrapped.value.errors ?? []
+              return yield* new CloudflareApiError({
+                operation,
+                message: `${operation} failed: HTTP ${response.status}`,
+                ...(errors[0]?.code === undefined ? {} : { code: String(errors[0].code) }),
+                statusCode: response.status,
+                ...(response.headers.get("cf-ray") === null
+                  ? {}
+                  : { requestId: response.headers.get("cf-ray")! }),
+                body: safeBody(text),
+                // The status says 200, so nothing downstream could tell.
+                ...(isTransientFailure(errors) ? { transient: true } : {}),
+                ...(() => {
+                  const ms = retryAfter(response.headers.get("retry-after"))
+                  return ms !== undefined ? { retryAfterMs: ms } : {}
+                })()
+              })
+            }
+
+            const value = decode(wrapped.value.result)
+            if (Option.isNone(value)) {
+              return yield* new CloudflareApiError({
+                operation,
+                message: `${operation} returned a result deploykit does not recognise`,
+                ...(operation === "createDeployment" &&
+                typeof wrapped.value.result === "object" &&
+                wrapped.value.result !== null &&
+                "id" in wrapped.value.result &&
+                typeof wrapped.value.result.id === "string"
+                  ? { deploymentId: wrapped.value.result.id }
+                  : {}),
+                statusCode: response.status,
+                ...(response.headers.get("cf-ray") === null
+                  ? {}
+                  : { requestId: response.headers.get("cf-ray")! }),
+                body: safeBody(text)
+              })
+            }
+            return value.value
           })
-        }
-        return value.value
-      })
+        )
+      )
+    ).pipe(
+      Effect.timeout(config.timeoutMs ?? 30000),
+      Effect.catchTag(
+        "TimeoutError",
+        () => new CloudflareApiError({ operation, message: `${operation} deadline exceeded` })
+      )
     )
 
   const json = (token: string, body: unknown): RequestInit => ({
@@ -148,6 +155,7 @@ export const makeCloudflareClient = (config: CloudflareHttpConfig): CloudflareCl
   const ignored = Schema.decodeUnknownOption(Schema.Unknown)
 
   return {
+    ...(config.previewBranch === undefined ? {} : { previewBranch: config.previewBranch }),
     createProject: name =>
       call(
         "createProject",
@@ -189,16 +197,30 @@ export const makeCloudflareClient = (config: CloudflareHttpConfig): CloudflareCl
         { headers: auth }
       ).pipe(Effect.map(result => result.jwt)),
 
-    /**
-     * Cloudflare answers the manifest-first question natively: hand it every
-     * hash and it says which it does not hold. Vercel only tells you inside a
-     * rejected deployment.
-     */
     checkMissing: (jwt, hashes) =>
       call("checkMissing", decodeHashes, "/pages/assets/check-missing", json(jwt, { hashes })),
 
     uploadAssets: (jwt, payload) =>
       call("uploadAssets", ignored, "/pages/assets/upload", json(jwt, payload)).pipe(Effect.asVoid),
+
+    uploadAssetStream: (jwt, byteLength, open) =>
+      call(
+        "uploadAssets",
+        ignored,
+        "/pages/assets/upload",
+        open.pipe(
+          Effect.map(body => ({
+            method: "POST",
+            headers: {
+              Authorization: `Bearer ${jwt}`,
+              "Content-Type": "application/json",
+              "Content-Length": String(byteLength)
+            },
+            body,
+            duplex: "half"
+          }))
+        )
+      ).pipe(Effect.asVoid),
 
     upsertHashes: (jwt, hashes) =>
       call("upsertHashes", ignored, "/pages/assets/upsert-hashes", json(jwt, { hashes })).pipe(
@@ -208,6 +230,7 @@ export const makeCloudflareClient = (config: CloudflareHttpConfig): CloudflareCl
     createDeployment: (projectName, manifest, extras) => {
       const form = new FormData()
       form.append("manifest", JSON.stringify(manifest))
+      if (extras?.branch !== undefined) form.append("branch", extras.branch)
       if (extras?.workerBundle !== undefined) {
         form.append("_worker.bundle", new File([extras.workerBundle], "_worker.bundle"))
       }

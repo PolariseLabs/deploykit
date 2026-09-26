@@ -1,6 +1,6 @@
 {
   "name": "@deploykit/core",
-  "version": "1.0.0",
+  "version": "0.1.0-alpha.1",
   "description": "Provider-independent deployment domain: Artifact, App, Deployment, errors, capabilities.",
   "type": "module",
   "license": "MIT",
@@ -26,10 +26,43 @@
     "./entry": {
       "types": "./dist/artifact/entry.d.ts",
       "default": "./dist/artifact/entry.js"
+    },
+    "./manifest": {
+      "types": "./dist/manifest.d.ts",
+      "default": "./dist/manifest.js"
+    },
+    "./source": {
+      "types": "./dist/source.d.ts",
+      "default": "./dist/source.js"
+    },
+    "./transfer": {
+      "types": "./dist/transfer.d.ts",
+      "default": "./dist/transfer.js"
+    },
+    "./http": {
+      "types": "./dist/provider/http.d.ts",
+      "default": "./dist/provider/http.js"
+    },
+    "./staging": {
+      "types": "./dist/staging.d.ts",
+      "default": "./dist/staging.js"
+    },
+    "./telemetry": {
+      "types": "./dist/telemetry.d.ts",
+      "default": "./dist/telemetry.js"
+    },
+    "./manifest-builder": {
+      "types": "./dist/manifestBuilder.d.ts",
+      "default": "./dist/manifestBuilder.js"
+    },
+    "./deploykit": {
+      "types": "./dist/deploykit.d.ts",
+      "default": "./dist/deploykit.js"
     }
   },
   "files": [
-    "dist"
+    "dist",
+    "LICENSE"
   ],
   "sideEffects": false,
   "scripts": {
@@ -40,5 +73,12 @@
   },
   "devDependencies": {
     "@effect/platform-node": "4.0.0-rc.112"
+  },
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "publishConfig": {
+    "access": "public",
+    "tag": "alpha"
   }
 }

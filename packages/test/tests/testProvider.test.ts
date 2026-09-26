@@ -67,6 +67,7 @@ describe("deleteApp", () => {
 
       assert.strictEqual((yield* snapshot).apps.size, 0)
       const error = yield* Effect.flip(provider.getApp(app.id))
+      if (error._tag !== "ProviderError") throw error
       assert.strictEqual(error.appId, app.id)
     })
   )
@@ -139,6 +140,7 @@ describe("deploy", () => {
 
       const error = yield* Effect.flip(provider.deploy(app.id, Artifact.empty))
 
+      if (error._tag !== "ProviderError") throw error
       assert.strictEqual(error.appId, app.id)
     })
   )
@@ -260,12 +262,6 @@ describe("snapshot", () => {
   )
 })
 
-/**
- * The layer is how code under test gets a provider: it asks for
- * DeploymentProvider and never learns which implementation answered. The same
- * layer also supplies TestProvider, so the test can inspect what the code did
- * without the code itself having any access to the inspection handles.
- */
 it.layer(TestProvider.layer())("through the layer", it => {
   it.effect("satisfies DeploymentProvider for code that knows nothing about tests", () =>
     Effect.gen(function* () {
@@ -279,12 +275,6 @@ it.layer(TestProvider.layer())("through the layer", it => {
     })
   )
 
-  /**
-   * it.layer builds the layer once for the whole block, so every test here
-   * shares one provider instance. Asserting on a count that grew is what
-   * proves the two services are the same instance; asserting on an absolute
-   * count would only prove the tests ran in a particular order.
-   */
   it.effect("backs both services with one instance, so assertions see the real calls", () =>
     Effect.gen(function* () {
       const deployer = yield* Provider.DeploymentProvider
@@ -323,11 +313,6 @@ describe("access control", () => {
     })
   )
 
-  /**
-   * The half of Capabilities that cannot be derived. Both providers below have
-   * the method; they differ in what they accept, and nothing about the object
-   * reveals that.
-   */
   it.effect("declares which modes it accepts", () =>
     Effect.gen(function* () {
       const { provider } = yield* TestProvider.make()

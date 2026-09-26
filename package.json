@@ -16,7 +16,10 @@
     "format:check": "prettier --check .",
     "prepare": "effect-language-service patch",
     "smoke": "bun scripts/smoke.ts",
-    "check:control": "bun scripts/check-control-bundle.ts"
+    "check:control": "bun scripts/check-control-bundle.ts",
+    "check:packages": "bun run build && bun scripts/check-packages.ts",
+    "benchmark": "bun run build && bun scripts/benchmark.ts",
+    "devtools": "bun examples/devtools.ts"
   },
   "devDependencies": {
     "@deploykit/cloudflare": "workspace:*",
@@ -28,10 +31,14 @@
     "@eslint/js": "10.0.1",
     "@types/node": "24.13.3",
     "effect": "4.0.0-rc.112",
+    "esbuild": "0.25.12",
     "eslint": "10.10.0",
     "prettier": "3.9.6",
     "typescript": "5.9.3",
     "typescript-eslint": "8.70.0",
-    "vitest": "4.1.11"
+    "vitest": "4.1.11",
+    "@deploykit/devtools": "workspace:*",
+    "@deploykit/node": "workspace:*",
+    "@deploykit/test": "workspace:*"
   }
 }

@@ -1,19 +1,11 @@
-/**
- * An in-memory Provider for tests: no network, no timers, no randomness.
- *
- * Ids count up (`app-1`, `deployment-1`) and a build advances exactly one step
- * per getDeployment call, so the same test run twice sees the same thing twice.
- * Failures are opt-in through TestProviderConfig rather than simulated at
- * random, so an error path is something a test asks for, not something it waits
- * for.
- */
-
 import { Context, Effect, Layer, Option, Ref } from "effect"
 import type { Artifact } from "@deploykit/core"
 import { Provider } from "@deploykit/core"
 
 /** Which calls fail, so error paths are testable without breaking anything real. */
 export interface TestProviderConfig {
+  readonly lostCreateResponse?: ReadonlyArray<string>
+
   readonly failOn?: {
     /** App names whose createApp fails, as a provider would on a name clash. */
     readonly createApp?: ReadonlyArray<string>
@@ -26,34 +18,22 @@ export interface TestProviderConfig {
     /** App ids whose deploy is accepted but whose build ends in "failed". */
     readonly build?: ReadonlyArray<string>
   }
-  /**
-   * App ids whose deployments never leave "pending". Not a failure: it is a
-   * build that hangs, which is what a poller's bound exists to survive.
-   */
+
   readonly neverFinish?: ReadonlyArray<string>
-  /**
-   * Omit findAppByName, so the provider declares it cannot adopt by name. Models
-   * a provider that addresses apps only by opaque id.
-   */
+
   readonly withoutAdoptByName?: boolean
   /** Omit setAccess, modelling a provider with no access model at all. */
   readonly withoutAccessControl?: boolean
-  /**
-   * Fail the first N calls to getDeployment, then behave normally. Models a
-   * provider that drops or throttles status checks while the build carries on
-   * regardless, which is the case a poller has to ride out.
-   */
+
   readonly failFirstPolls?: number
-  /**
-   * Fail getDeployment on these 1-based call numbers. Unlike failFirstPolls
-   * this can interleave failures with answers, which is what distinguishes
-   * "too many consecutive failures" from "too many failures".
-   */
+
   readonly failPollsAt?: ReadonlyArray<number>
 }
 
 /** What the provider kept about one deployment, including the files it was handed. */
 export interface DeploymentRecord {
+  readonly operationId?: string
+
   readonly deployment: Provider.Deployment
   readonly artifact: Artifact.Artifact
   readonly buildFails: boolean
@@ -98,10 +78,6 @@ const failure = (
   } = {}
 ) => new Provider.ProviderError({ provider: "test", message, ...fields })
 
-/**
- * One step of the build. Terminal states stay put, so polling a finished
- * deployment is safe and idempotent.
- */
 const nextStatus = (
   status: Provider.DeploymentStatus,
   buildFails: boolean,
@@ -143,6 +119,7 @@ const withStatus = (deployment: Provider.Deployment, status: Provider.Deployment
 export const make = (config: TestProviderConfig = {}): Effect.Effect<TestProviderApi> =>
   Effect.gen(function* () {
     const state = yield* Ref.make(initialState)
+    const active = yield* Ref.make(new Map<string, string>())
 
     const failCreateApp = new Set(config.failOn?.createApp ?? [])
     const failGetApp = new Set(config.failOn?.getApp ?? [])
@@ -225,7 +202,11 @@ export const make = (config: TestProviderConfig = {}): Effect.Effect<TestProvide
         })
       })
 
-    const deploy = (appId: string, artifact: Artifact.Artifact) =>
+    const deploy = (
+      appId: string,
+      artifact: Artifact.Artifact,
+      options: Provider.DeployOptions = {}
+    ) =>
       Effect.gen(function* () {
         if (failDeploy.has(appId)) {
           return yield* failure(`deploy is configured to fail for "${appId}"`, { appId })
@@ -236,7 +217,7 @@ export const make = (config: TestProviderConfig = {}): Effect.Effect<TestProvide
           return yield* failure(`cannot deploy to unknown app "${appId}"`, { appId })
         }
 
-        return yield* Ref.modify(state, current => {
+        const created = yield* Ref.modify(state, current => {
           const id = `deployment-${current.nextDeploymentId}`
           const deployment = Provider.Deployment.make({
             id: Provider.deploymentId.make(id),
@@ -248,6 +229,7 @@ export const make = (config: TestProviderConfig = {}): Effect.Effect<TestProvide
           const record: DeploymentRecord = {
             deployment,
             artifact,
+            ...(options.operationId === undefined ? {} : { operationId: options.operationId }),
             buildFails: failBuild.has(appId),
             stuck: neverFinish.has(appId)
           }
@@ -260,13 +242,20 @@ export const make = (config: TestProviderConfig = {}): Effect.Effect<TestProvide
             }
           ]
         })
+        if (options.activation !== "deferred" && options.target !== "preview")
+          yield* Ref.update(active, values => new Map(values).set(appId, created.id))
+        if (config.lostCreateResponse?.includes(appId))
+          return yield* new Provider.ProviderError({
+            provider: "test",
+            operation: "createDeployment",
+            message: "Response lost",
+            appId,
+            outcome: "unknown",
+            recovery: "reconcile"
+          })
+        return created
       })
 
-    /**
-     * Returns the status as it stands, then advances the stored one. A caller
-     * that polls sees pending, then deploying, then deployed, which is the
-     * shape real polling code has to cope with.
-     */
     const getDeployment = (_appId: string, deploymentId: string) =>
       Effect.gen(function* () {
         const call = yield* Ref.updateAndGet(pollCount, n => n + 1)
@@ -312,6 +301,42 @@ export const make = (config: TestProviderConfig = {}): Effect.Effect<TestProvide
 
     const base = {
       name: "test",
+      deferredActivation: true,
+      previewDeployments: true,
+      reconcileDeployment: (
+        appId: string,
+        operationId: string
+      ): Effect.Effect<Provider.Reconciliation> =>
+        Ref.get(state).pipe(
+          Effect.map(current => {
+            const found = [...current.deployments.values()].filter(
+              record => record.deployment.appId === appId && record.operationId === operationId
+            )
+            return found.length === 1
+              ? { _tag: "Recovered", deployment: found[0]!.deployment }
+              : {
+                  _tag: "Unknown",
+                  candidates: found.map(record => record.deployment.id),
+                  reason: "No unique match"
+                }
+          })
+        ),
+      activateDeployment: (appId: string, deploymentId: string) =>
+        Effect.gen(function* () {
+          const record = (yield* Ref.get(state)).deployments.get(deploymentId)
+          if (record?.deployment.appId !== appId || record.deployment.status !== "deployed")
+            return yield* failure("Deployment is not ready for activation", { appId, deploymentId })
+          yield* Ref.update(active, values => new Map(values).set(appId, deploymentId))
+          return { appId, deploymentId, state: "active" as const }
+        }),
+      getActivation: (appId: string, deploymentId: string) =>
+        Ref.get(active).pipe(
+          Effect.map(values => ({
+            appId,
+            deploymentId,
+            state: values.get(appId) === deploymentId ? ("active" as const) : ("unknown" as const)
+          }))
+        ),
       createApp,
       getApp,
       deleteApp,
@@ -345,10 +370,6 @@ export class TestProvider extends Context.Service<TestProvider, TestProviderApi>
   "@deploykit/TestProvider"
 ) {}
 
-/**
- * Provides DeploymentProvider for the code under test and TestProvider for the
- * test's own assertions, both backed by the same instance.
- */
 export const layer = (config: TestProviderConfig = {}) =>
   Layer.effect(
     Provider.DeploymentProvider,

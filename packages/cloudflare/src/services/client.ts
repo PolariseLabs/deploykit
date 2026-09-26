@@ -1,17 +1,4 @@
-/**
- * The slice of Cloudflare's API this adapter uses.
- *
- * Two authorities, not one. Project operations use the account API token;
- * asset operations use a short-lived JWT fetched per project. Vercel needed a
- * single bearer token for everything, which is why the Vercel client has no
- * notion of scope and this one does.
- *
- * Everything also arrives wrapped: Cloudflare answers `{ success, errors,
- * messages, result }` and puts a 200 on failures. Unwrapping that is the
- * client's job, so nothing above it has to know.
- */
-
-import type { Effect } from "effect"
+import type { Effect, Scope } from "effect"
 import { Schema } from "effect"
 import { pagesLatestStage } from "./status.js"
 
@@ -22,6 +9,9 @@ export class CloudflareApiError extends Schema.TaggedError<CloudflareApiError>()
   {
     message: Schema.String,
     operation: Schema.String,
+    requestId: Schema.optional(Schema.String),
+    deploymentId: Schema.optional(Schema.String),
+    code: Schema.optional(Schema.String),
     statusCode: Schema.optional(Schema.Number),
     body: Schema.optional(Schema.String),
     retryAfterMs: Schema.optional(Schema.Number),
@@ -29,14 +19,6 @@ export class CloudflareApiError extends Schema.TaggedError<CloudflareApiError>()
   }
 ) {}
 
-/**
- * Cloudflare's own internal failures, which arrive as HTTP 200 with
- * `success: false` and so look permanent to anything classifying on status.
- *
- * Observed: a createProject answered "An unknown error occurred. Contact your
- * account team or Cloudflare support" and the identical request succeeded
- * seconds later. Code 8000000 is their generic internal error.
- */
 export const isTransientFailure = (
   errors: ReadonlyArray<{ readonly code?: number | undefined; readonly message: string }>
 ): boolean =>
@@ -50,16 +32,11 @@ export const isTransientFailure = (
 /** The fields this adapter reads off a Pages project. */
 export const pagesProject = Schema.Struct({
   id: Schema.String,
-  name: Schema.String
+  name: Schema.String,
+  production_branch: Schema.optional(Schema.String)
 })
 export type PagesProject = typeof pagesProject.Type
 
-/**
- * A Pages deployment.
- *
- * `latest_stage` is the whole state: a stage and a status, where only
- * `deploy/success` means live. `url` is present once there is one.
- */
 export const pagesDeployment = Schema.Struct({
   id: Schema.String,
   url: Schema.optional(Schema.String),
@@ -81,6 +58,7 @@ export interface AssetUpload {
 
 /** Parts of a deployment that are not assets. */
 export interface DeploymentExtras {
+  readonly branch?: string
   /** A serialised Workers upload form, from `workerBundle`. */
   readonly workerBundle?: Blob
   /** Which paths the Worker handles; without it, it handles everything. */
@@ -90,6 +68,7 @@ export interface DeploymentExtras {
 }
 
 export interface CloudflareClient {
+  readonly previewBranch?: string
   readonly createProject: (name: string) => Effect.Effect<PagesProject, CloudflareApiError>
   readonly getProject: (name: string) => Effect.Effect<PagesProject, CloudflareApiError>
   readonly deleteProject: (name: string) => Effect.Effect<void, CloudflareApiError>
@@ -105,6 +84,11 @@ export interface CloudflareClient {
     jwt: string,
     hashes: ReadonlyArray<string>
   ) => Effect.Effect<ReadonlyArray<string>, CloudflareApiError>
+  readonly uploadAssetStream?: (
+    jwt: string,
+    byteLength: number,
+    open: Effect.Effect<ReadableStream<Uint8Array>, never, Scope.Scope>
+  ) => Effect.Effect<void, CloudflareApiError>
   readonly uploadAssets: (
     jwt: string,
     payload: ReadonlyArray<AssetUpload>
@@ -115,11 +99,6 @@ export interface CloudflareClient {
     hashes: ReadonlyArray<string>
   ) => Effect.Effect<void, CloudflareApiError>
 
-  /**
-   * The manifest maps a leading-slash path to the hash holding its bytes.
-   * `extras` carries the files Pages treats specially rather than as assets:
-   * the Worker bundle, routing and header rules.
-   */
   readonly createDeployment: (
     projectName: string,
     manifest: Readonly<Record<string, string>>,

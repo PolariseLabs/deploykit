@@ -1,35 +1,18 @@
-/**
- * The live VercelClient: plain fetch, no SDK, Effect all the way out.
- *
- * `fetch` is the only promise boundary, and it is crossed once in `request`.
- * Everything above it is an Effect with a typed failure, so a caller decides
- * what to retry from the status rather than by inspecting an exception.
- */
+import { makeUploadThrottle, type UploadThrottle } from "./throttle.js"
+import * as Telemetry from "@deploykit/core/telemetry"
+import { fetchText, safeBody, retryAfter, responseCode } from "@deploykit/core/http"
 
-import { Effect, Option, Schema } from "effect"
+import type { Scope } from "effect"
+import { Clock, Effect, Option, Schema } from "effect"
 import * as Provider from "@deploykit/core/provider"
 import {
   VERCEL_API,
   VercelApiError,
   vercelDeployment,
+  vercelReadyState,
   vercelProject,
   type VercelClient
 } from "./client.js"
-
-/** Bodies can be large; only the front of one is ever useful in an error. */
-const MAX_BODY = 2000
-
-/**
- * Retry-After is seconds or an HTTP date. Honouring it beats guessing, because
- * it is the server saying exactly how long to wait.
- */
-const retryAfterMs = (header: string | null): number | undefined => {
-  if (header === null) return undefined
-  const seconds = Number(header)
-  if (Number.isFinite(seconds) && seconds >= 0) return seconds * 1000
-  const at = Date.parse(header)
-  return Number.isNaN(at) ? undefined : Math.max(0, at - Date.now())
-}
 
 export interface VercelHttpConfig {
   readonly token: string
@@ -39,11 +22,11 @@ export interface VercelHttpConfig {
   readonly baseUrl?: string
   /** Defaults to the global fetch, so a caller can supply their own. */
   readonly fetch?: typeof globalThis.fetch
-  /**
-   * Backoff for transient failures. Pass `{ attempts: 1 }` to disable retrying,
-   * or a zero base delay in tests.
-   */
+
+  /** Shared by uploads and retries through this client; omitted preserves unpaced uploads. */
+  readonly uploadThrottle?: UploadThrottle
   readonly retry?: Provider.RetryOptions
+  readonly timeoutMs?: number
 }
 
 /** Built once: decoding is on the hot path for every poll. */
@@ -55,14 +38,9 @@ export const makeVercelClient = (config: VercelHttpConfig): VercelClient => {
   const doFetch = config.fetch ?? globalThis.fetch
   const auth = { Authorization: `Bearer ${config.token}` }
 
-  /**
-   * Reads and content-addressed uploads can be repeated safely. Creates
-   * cannot: a 500 from createDeployment may mean the deployment exists, and
-   * retrying would make a second one. Those retry on a throttle only, where
-   * the provider rejected the request before acting on it.
-   */
+  const throttle = makeUploadThrottle(config.uploadThrottle)
   const retrySafe = Provider.retryIdempotent(config.retry)
-  const retryCreate = Provider.retryThrottleOnly(config.retry)
+  const retryCreate = <A, E>(effect: Effect.Effect<A, E>) => effect
 
   const url = (path: string, params: Record<string, string> = {}) => {
     const query = new URLSearchParams(params)
@@ -71,58 +49,73 @@ export const makeVercelClient = (config: VercelHttpConfig): VercelClient => {
     return `${baseUrl}${path}${search === "" ? "" : `?${search}`}`
   }
 
-  /**
-   * The single promise boundary. A thrown fetch means the request never got an
-   * answer, so the error carries no status and `isTransient` treats it as
-   * retryable; a non-ok response carries everything the server said.
-   */
   type Retrier = <A, E extends Provider.RetryableFailure>(
     effect: Effect.Effect<A, E>
   ) => Effect.Effect<A, E>
-
   const request = (
     operation: string,
     href: string,
-    init?: RequestInit,
+    init?: RequestInit | Effect.Effect<RequestInit, never, Scope.Scope>,
     retry: Retrier = retrySafe
-  ) =>
-    retry(
-      Effect.gen(function* () {
-        const response = yield* Effect.tryPromise({
-          try: () => doFetch(href, init),
-          catch: cause =>
-            new VercelApiError({
-              operation,
-              message: cause instanceof Error ? cause.message : `${operation} could not be sent`
-            })
+  ) => {
+    const attempt = Telemetry.observe(
+      "vercel",
+      operation,
+      Effect.scoped(
+        Effect.gen(function* () {
+          const options = Effect.isEffect(init) ? yield* init : init
+          return yield* fetchText(doFetch, href, options)
         })
-
-        if (!response.ok) {
-          const body = yield* Effect.promise(() => response.text().catch(() => ""))
-          return yield* new VercelApiError({
-            operation,
-            message: `${operation} failed: HTTP ${response.status}`,
-            statusCode: response.status,
-            body: body.slice(0, MAX_BODY),
-            ...(() => {
-              const ms = retryAfterMs(response.headers.get("retry-after"))
-              return ms !== undefined ? { retryAfterMs: ms } : {}
-            })()
+      ).pipe(
+        Effect.mapError(
+          () => new VercelApiError({ operation, message: `${operation} transport failed` })
+        ),
+        Effect.flatMap(({ response, text }) =>
+          Effect.gen(function* () {
+            const reset = Number(response.headers.get("x-ratelimit-reset")) * 1000
+            const now = yield* Clock.currentTimeMillis
+            const retryAfterMs =
+              retryAfter(response.headers.get("retry-after")) ??
+              (response.status === 429 && Number.isFinite(reset) && reset > now
+                ? reset - now
+                : undefined)
+            const diagnostic = {
+              operation,
+              statusCode: response.status,
+              ...(responseCode(text) === undefined ? {} : { code: responseCode(text)! }),
+              ...(response.headers.get("x-vercel-id") === null
+                ? {}
+                : { requestId: response.headers.get("x-vercel-id")! }),
+              ...(retryAfterMs === undefined ? {} : { retryAfterMs })
+            }
+            if (operation === "uploadFile" && response.status === 429) {
+              yield* throttle.cooldown(retryAfterMs ?? 1000)
+            }
+            return yield* response.ok
+              ? Effect.succeed({ text, diagnostic })
+              : Effect.fail(
+                  new VercelApiError({
+                    ...diagnostic,
+                    message: `${operation} failed: HTTP ${response.status}`,
+                    body: safeBody(text)
+                  })
+                )
           })
-        }
-
-        return response
-      })
+        )
+      )
     )
+    return Effect.andThen(
+      operation === "uploadFile" ? throttle.validate : Effect.void,
+      retry(operation === "uploadFile" ? throttle.run(attempt) : attempt)
+    ).pipe(
+      Effect.timeout(config.timeoutMs ?? 30000),
+      Effect.catchTag(
+        "TimeoutError",
+        () => new VercelApiError({ operation, message: `${operation} deadline exceeded` })
+      )
+    )
+  }
 
-  /**
-   * Read the body and check its shape before anyone downstream trusts it.
-   *
-   * Without this the response was cast, so a field Vercel renamed became
-   * `undefined` three layers away, and an unrecognised readyState reached
-   * `Deployment.make` and threw a defect. Both are now one typed failure that
-   * carries the body, so the answer is in the error rather than in a stack.
-   */
   const json = <A>(
     operation: string,
     decode: (input: unknown) => Option.Option<A>,
@@ -131,41 +124,85 @@ export const makeVercelClient = (config: VercelHttpConfig): VercelClient => {
     retry: Retrier = retrySafe
   ): Effect.Effect<A, VercelApiError> =>
     request(operation, href, init, retry).pipe(
-      Effect.flatMap(response =>
+      Effect.flatMap(({ text, diagnostic }) =>
         Effect.gen(function* () {
-          const text = yield* Effect.promise(() => response.text().catch(() => ""))
-
-          const parsed = Effect.try({
-            try: () => JSON.parse(text) as unknown,
-            catch: () => undefined
+          const value = yield* Effect.try({
+            try: (): unknown => JSON.parse(text),
+            catch: () =>
+              new VercelApiError({
+                ...diagnostic,
+                message: `${operation} returned a body that is not JSON`
+              })
           })
-          const value = yield* parsed.pipe(
-            Effect.mapError(
-              () =>
-                new VercelApiError({
-                  operation,
-                  message: `${operation} returned a body that is not JSON`,
-                  statusCode: response.status,
-                  body: text.slice(0, MAX_BODY)
-                })
-            )
-          )
-
           const decoded = decode(value)
-          if (Option.isNone(decoded)) {
+          if (Option.isNone(decoded))
             return yield* new VercelApiError({
-              operation,
-              message: `${operation} returned a body deploykit does not recognise`,
-              statusCode: response.status,
-              body: text.slice(0, MAX_BODY)
+              ...diagnostic,
+              ...(operation === "createDeployment" &&
+              typeof value === "object" &&
+              value !== null &&
+              "id" in value &&
+              typeof value.id === "string"
+                ? { deploymentId: value.id }
+                : {}),
+              message: `${operation} returned a body deploykit does not recognise`
             })
-          }
           return decoded.value
         })
       )
     )
 
   return {
+    promoteDeployment: (projectId, deploymentId) =>
+      request(
+        "activateDeployment",
+        url(
+          `/v10/projects/${encodeURIComponent(projectId)}/promote/${encodeURIComponent(deploymentId)}`
+        ),
+        {
+          method: "POST",
+          headers: { ...auth, "Content-Type": "application/json" },
+          body: "{}"
+        },
+        retryCreate
+      ).pipe(Effect.asVoid),
+    findDeployments: (projectId, operationId) =>
+      json(
+        "listDeployments",
+        Schema.decodeUnknownOption(
+          Schema.Struct({
+            deployments: Schema.Array(
+              Schema.Struct({
+                uid: Schema.String,
+                name: Schema.String,
+                readyState: vercelReadyState,
+                url: Schema.optional(Schema.String),
+                meta: Schema.optional(Schema.Record(Schema.String, Schema.String))
+              })
+            ),
+            pagination: Schema.Struct({ next: Schema.NullOr(Schema.Number) })
+          })
+        ),
+        url("/v6/deployments", {
+          projectId,
+          "meta-deploykitOperationId": operationId,
+          limit: "100"
+        }),
+        { headers: auth }
+      ).pipe(
+        Effect.map(result => ({
+          complete: result.pagination.next === null,
+          deployments: result.deployments
+            .filter(item => item.meta?.deploykitOperationId === operationId)
+            .map(item => ({
+              id: item.uid,
+              name: item.name,
+              readyState: item.readyState,
+              projectId,
+              ...(item.url === undefined ? {} : { url: item.url })
+            }))
+        }))
+      ),
     createProject: name =>
       json(
         "createProject",
@@ -190,29 +227,36 @@ export const makeVercelClient = (config: VercelHttpConfig): VercelClient => {
         headers: auth
       }).pipe(Effect.asVoid),
 
-    /**
-     * The digest header is the point of this call: Vercel stores the bytes
-     * under that sha and createDeployment then references it. The SDK
-     * mis-spells this header, which is why uploads through it always fail.
-     */
     uploadFile: (sha, bytes) =>
       request("uploadFile", url("/v2/files"), {
         method: "POST",
         headers: {
           ...auth,
           "Content-Type": "application/octet-stream",
-          "x-vercel-digest": sha,
-          "Content-Length": String(bytes.byteLength)
+          "x-vercel-digest": sha
         },
         body: bytes
       }).pipe(Effect.asVoid),
 
-    /**
-     * prebuilt=1 is what makes this a Build Output API deployment rather than a
-     * source upload Vercel would try to build. skipAutoDetectionConfirmation
-     * stops Vercel returning a 400 asking us to confirm a detected framework,
-     * which an automated pipeline has nobody to answer.
-     */
+    uploadFileStream: (sha, byteLength, open) =>
+      request(
+        "uploadFile",
+        url("/v2/files"),
+        open.pipe(
+          Effect.map(body => ({
+            method: "POST",
+            headers: {
+              ...auth,
+              "Content-Type": "application/octet-stream",
+              "x-vercel-digest": sha,
+              "Content-Length": String(byteLength)
+            },
+            body,
+            duplex: "half"
+          }))
+        )
+      ).pipe(Effect.asVoid),
+
     createDeployment: deployment =>
       json(
         "createDeployment",
@@ -227,8 +271,8 @@ export const makeVercelClient = (config: VercelHttpConfig): VercelClient => {
             target: deployment.target,
             files: deployment.files,
             ...(deployment.meta !== undefined ? { meta: deployment.meta } : {}),
-            ...(deployment.deploymentId !== undefined
-              ? { deploymentId: deployment.deploymentId }
+            ...(deployment.autoAssignCustomDomains !== undefined
+              ? { autoAssignCustomDomains: deployment.autoAssignCustomDomains }
               : {})
           })
         },

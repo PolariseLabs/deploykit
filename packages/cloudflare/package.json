@@ -1,6 +1,6 @@
 {
   "name": "@deploykit/cloudflare",
-  "version": "1.0.0",
+  "version": "0.1.0-alpha.1",
   "description": "Cloudflare Pages adapter for deploykit.",
   "type": "module",
   "license": "MIT",
@@ -17,7 +17,8 @@
     }
   },
   "files": [
-    "dist"
+    "dist",
+    "LICENSE"
   ],
   "sideEffects": false,
   "scripts": {
@@ -25,8 +26,17 @@
   },
   "dependencies": {
     "@deploykit/core": "workspace:*",
-    "@effect/platform-node": "4.0.0-rc.112",
     "@noble/hashes": "^2.4.0",
     "effect": "4.0.0-rc.112"
+  },
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "devDependencies": {
+    "@effect/platform-node": "4.0.0-rc.112"
+  },
+  "publishConfig": {
+    "access": "public",
+    "tag": "alpha"
   }
 }

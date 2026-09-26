@@ -47,10 +47,6 @@ const retryingClient = (respond: () => Response, attempts: number) => {
 }
 
 describe("createDeployment", () => {
-  /**
-   * The reason this adapter does not use @vercel/sdk. Without prebuilt=1
-   * Vercel treats the uploaded files as source and builds them.
-   */
   it.effect("sends prebuilt=1 and skipAutoDetectionConfirmation=1", () =>
     Effect.gen(function* () {
       const { calls, vercel } = client(() => ok({ id: "dpl_1", readyState: "QUEUED" }))
@@ -101,7 +97,7 @@ describe("uploadFile", () => {
       const headers = calls[0]!.init?.headers as Record<string, string>
       assert.strictEqual(new URL(calls[0]!.url).pathname, "/v2/files")
       assert.strictEqual(headers["x-vercel-digest"], "c22b5f91")
-      assert.strictEqual(headers["Content-Length"], "3")
+      assert.isUndefined(headers["Content-Length"])
       assert.strictEqual(headers["Content-Type"], "application/octet-stream")
     })
   )
@@ -122,7 +118,7 @@ describe("failures", () => {
 
       assert.strictEqual(error._tag, "VercelApiError")
       assert.strictEqual(error.statusCode, 429)
-      assert.match(error.body ?? "", /slow down/)
+      assert.notInclude(error.body ?? "", "slow down")
       assert.strictEqual(error.retryAfterMs, 30_000)
       assert.strictEqual(error.operation, "getProject")
     })
@@ -151,7 +147,7 @@ describe("failures", () => {
       const error = yield* Effect.flip(vercel.getProject("prj_1"))
 
       assert.strictEqual(error.statusCode, undefined)
-      assert.strictEqual(error.message, "ECONNREFUSED")
+      assert.strictEqual(error.message, "getProject transport failed")
     })
   )
 })
@@ -179,12 +175,7 @@ describe("team scoping", () => {
 })
 
 describe("response validation", () => {
-  /**
-   * The failure this prevents: an unrecognised state used to reach
-   * Deployment.make and throw a defect, so the first surprise from Vercel was
-   * a stack trace rather than a diagnosis.
-   */
-  it.effect("rejects a readyState deploykit does not know, naming the body", () =>
+  it.effect("rejects an unknown readyState without persisting the body", () =>
     Effect.gen(function* () {
       const { vercel } = client(() => ok({ id: "dpl_1", readyState: "DELETED" }))
 
@@ -192,7 +183,7 @@ describe("response validation", () => {
 
       assert.strictEqual(error._tag, "VercelApiError")
       assert.match(error.message, /does not recognise/)
-      assert.match(error.body ?? "", /DELETED/, "the body says what arrived")
+      assert.isUndefined(error.body)
     })
   )
 
@@ -224,7 +215,7 @@ describe("response validation", () => {
       const error = yield* Effect.flip(vercel.getProject("prj_1"))
 
       assert.match(error.message, /not JSON/)
-      assert.match(error.body ?? "", /gateway timeout/)
+      assert.isUndefined(error.body)
     })
   )
 
@@ -340,11 +331,6 @@ describe("retry", () => {
     })
   )
 
-  /**
-   * The distinction that matters. A 500 from a create may mean it succeeded
-   * and the response was lost, so retrying risks a duplicate project. A 429
-   * carries no such doubt: the request was rejected before it did anything.
-   */
   it.effect("does NOT retry createProject on a 500", () =>
     Effect.gen(function* () {
       const { calls, vercel } = retryingClient(() => new Response("", { status: 500 }), 4)
@@ -355,7 +341,7 @@ describe("retry", () => {
     })
   )
 
-  it.effect("does retry createProject on a 429", () =>
+  it.effect("does not assume a create throttling response proves no side effect", () =>
     Effect.gen(function* () {
       let call = 0
       const { calls, vercel } = retryingClient(() => {
@@ -363,18 +349,13 @@ describe("retry", () => {
         return call < 2 ? new Response("", { status: 429 }) : ok({ id: "prj_1", name: "alpha" })
       }, 4)
 
-      const project = yield* vercel.createProject("alpha")
+      const error = yield* Effect.flip(vercel.createProject("alpha"))
 
-      assert.strictEqual(project.id, "prj_1")
-      assert.strictEqual(calls.length, 2)
+      assert.strictEqual(error.statusCode, 429)
+      assert.strictEqual(calls.length, 1)
     })
   )
 
-  /**
-   * Retry-After must beat the computed backoff, or a throttled publish waits
-   * on a guess while the provider has already said exactly how long. Proved by
-   * setting a base delay so large that using it would blow the timeout.
-   */
   it.effect("honours Retry-After instead of the exponential guess", () =>
     Effect.gen(function* () {
       let call = 0

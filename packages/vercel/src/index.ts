@@ -1,5 +1,6 @@
+import { operations } from "./services/operations.js"
 import { Config, Effect, FileSystem, Layer, Redacted } from "effect"
-import { Provider } from "@deploykit/core"
+import { Deploykit, Provider } from "@deploykit/core"
 import {
   createVercelProject,
   deleteVercelProject,
@@ -11,21 +12,8 @@ import { deployToVercelProject } from "./services/deployments.js"
 import { getDeployment } from "./services/status.js"
 import { makeVercelClient } from "./services/http.js"
 import type { VercelClient } from "./services/client.js"
+import type { VercelHttpConfig } from "./services/http.js"
 
-/**
- * The Vercel adapter, configured from the environment.
- *
- * Two deliberate choices about what this layer does NOT do.
- *
- * It provides no platform layer. An adapter should not pick the caller's
- * runtime, so `FileSystem` stays in this layer's requirements and the caller
- * supplies `NodeFileSystem.layer` on Node, or any implementation elsewhere.
- * Only `File` entries ever reach it.
- *
- * It reads config rather than taking it, which suits an application. A caller
- * that already holds a token, or wants a different base URL or fetch, builds
- * the client with `makeVercelClient` and uses `layerWith`.
- */
 export const vercelLayer = Layer.effect(
   Provider.DeploymentProvider,
   Effect.gen(function* () {
@@ -53,8 +41,17 @@ export const layerWith = (client: VercelClient) =>
     Effect.map(FileSystem.FileSystem, fs => makeProvider(client, fs))
   )
 
+/** `Deploykit` on Vercel: the layer most Effect apps want. Requires a `FileSystem`. */
+export const layer = (options: VercelHttpConfig & Deploykit.Limits) =>
+  Deploykit.layer(options).pipe(Layer.provide(layerWith(makeVercelClient(options))))
+
+/** `layer`, reading credentials from `VERCEL_TOKEN` and `VERCEL_TEAM_ID`. */
+export const layerConfig = (limits?: Deploykit.Limits) =>
+  Deploykit.layer(limits).pipe(Layer.provide(vercelLayer))
+
 const makeProvider = (vercel: VercelClient, fs: FileSystem.FileSystem): Provider.Provider => ({
   name: "Vercel",
+  ...operations(vercel),
   createApp: name => createVercelProject(vercel, name),
   getApp: id => getVercelProject(vercel, id),
   deleteApp: id => deleteVercelProject(vercel, id),
@@ -84,3 +81,6 @@ export {
   vercelClientFromConfig,
   vercelControlLayer
 } from "./control.js"
+
+export { uploadThrottlePresets } from "./services/throttle.js"
+export type { UploadThrottle, UploadThrottleLimits } from "./services/throttle.js"

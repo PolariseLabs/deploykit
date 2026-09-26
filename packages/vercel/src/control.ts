@@ -1,19 +1,4 @@
-/**
- * The Vercel control plane, and nothing that moves bytes.
- *
- * A separate entry point rather than a subset of the main one, because the
- * saving is in what is never imported. Deploying needs a hasher, an uploader
- * and a filesystem; `node:crypto` comes with it. Creating a project, resolving
- * one, setting access and polling a deployment need none of that.
- *
- * That gap is the difference between running in Convex and not. Its V8 runtime
- * has no `node:crypto`, gives a function 64 MiB, and caps a whole deployment's
- * code at 32 MiB. Importing the full adapter to poll a deployment would spend
- * that budget on code the function cannot use.
- *
- * Verified rather than asserted: `bun run check:control` walks the built
- * module graph and fails if anything Node-only is reachable from here.
- */
+import { operations } from "./services/operations.js"
 
 import { Config, Effect, Layer, Redacted } from "effect"
 // The provider subpath, not the barrel: importing the barrel would pull the
@@ -33,6 +18,7 @@ import type { VercelClient } from "./services/client.js"
 /** The control-plane half of the adapter, over a client the caller built. */
 export const makeVercelControl = (vercel: VercelClient): Provider.ControlPlane => ({
   name: "Vercel",
+  ...operations(vercel),
   createApp: name => createVercelProject(vercel, name),
   getApp: id => getVercelProject(vercel, id),
   deleteApp: id => deleteVercelProject(vercel, id),
@@ -55,10 +41,6 @@ export const vercelClientFromConfig = Effect.gen(function* () {
   })
 })
 
-/**
- * Provides DeploymentControl only. No FileSystem requirement, because nothing
- * here reads a file.
- */
 export const vercelControlLayer = Layer.effect(
   Provider.DeploymentControl,
   Effect.map(vercelClientFromConfig, makeVercelControl)

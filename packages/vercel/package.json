@@ -1,6 +1,6 @@
 {
   "name": "@deploykit/vercel",
-  "version": "1.0.0",
+  "version": "0.1.0-alpha.1",
   "description": "Vercel adapter for DeployKit.",
   "type": "module",
   "license": "MIT",
@@ -17,7 +17,8 @@
     }
   },
   "files": [
-    "dist"
+    "dist",
+    "LICENSE"
   ],
   "sideEffects": false,
   "scripts": {
@@ -25,7 +26,16 @@
   },
   "dependencies": {
     "@deploykit/core": "workspace:*",
-    "@effect/platform-node": "4.0.0-rc.112",
     "effect": "4.0.0-rc.112"
+  },
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "devDependencies": {
+    "@effect/platform-node": "4.0.0-rc.112"
+  },
+  "publishConfig": {
+    "access": "public",
+    "tag": "alpha"
   }
 }

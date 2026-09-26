@@ -1,3 +1,4 @@
+import * as Telemetry from "@deploykit/core/telemetry"
 import { assert, describe, it } from "@effect/vitest"
 import { NodeFileSystem } from "@effect/platform-node"
 import { Effect, FileSystem } from "effect"
@@ -11,11 +12,6 @@ const withFs = <A, E>(effect: Effect.Effect<A, E, FileSystem.FileSystem>) =>
   effect.pipe(Effect.provide(NodeFileSystem.layer))
 
 describe("the Pages digest", () => {
-  /**
-   * The surprising part of wrangler's hashFile: the extension is hashed in,
-   * so identical bytes at different paths get different hashes. This is why
-   * DeferredEntry keys digests by algorithm rather than carrying a `sha1`.
-   */
   it("depends on the extension, not just the content", () => {
     const bytes = new TextEncoder().encode("hi")
     assert.notStrictEqual(pagesDigest(bytes, "a.txt"), pagesDigest(bytes, "a.html"))
@@ -194,6 +190,7 @@ describe("deploying", () => {
         )
 
         assert.strictEqual(error._tag, "ProviderError")
+        if (error._tag !== "ProviderError") throw error
         assert.strictEqual(error.provider, "cloudflare")
         assert.strictEqual(error.statusCode, 403)
         assert.strictEqual(error.appId, "alpha")
@@ -201,3 +198,38 @@ describe("deploying", () => {
     )
   )
 })
+
+it.effect("telemetry reports cache decisions and incremental acknowledged uploads", () =>
+  withFs(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem
+      const stub = stubClient()
+      const events: Array<Telemetry.Event> = []
+      const artifact = yield* Artifact.make([
+        yield* Entry.text("a.txt", "hi"),
+        yield* Entry.text("b.txt", "bye")
+      ])
+      yield* deployToPagesProject(stub.client, fs, "alpha", artifact).pipe(
+        Effect.provideService(Telemetry.Observer, event =>
+          Effect.sync(() => {
+            events.push(event)
+          })
+        )
+      )
+      assert(
+        events.some(
+          event => event.kind === "progress" && event.stage === "uploading" && event.done === 1
+        )
+      )
+      const last = events
+        .filter(event => event.kind === "progress" && event.stage === "uploading")
+        .at(-1)
+      assert(last?.kind === "progress")
+      assert.equal(last.bytes, 5)
+      const cache = events.find(event => event.kind === "cache")
+      assert(cache?.kind === "cache")
+      assert.equal(cache.missingContents, 2)
+      assert.equal(cache.missingBytes, 5)
+    })
+  )
+)

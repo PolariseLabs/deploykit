@@ -25,7 +25,14 @@ const INVISIBLE = /[\u200b-\u200f\u2028\u2029\u202a-\u202e\u2066-\u2069\ufeff]/
 /** A leading drive letter, so "C:/dist" is not mistaken for a relative path. */
 export const DRIVE_LETTER = /^[a-z]:/i
 
-export const utf8Length = (value: string) => new TextEncoder().encode(value).length
+export const utf8Length = (value: string): number => {
+  let bytes = 0
+  for (const character of value) {
+    const point = character.codePointAt(0)!
+    bytes += point < 0x80 ? 1 : point < 0x800 ? 2 : point < 0x10000 ? 3 : 4
+  }
+  return bytes
+}
 
 /** Why this segment is unacceptable, or undefined if it is fine. */
 export const segmentProblem = (segment: string): string | undefined => {

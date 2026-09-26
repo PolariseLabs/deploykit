@@ -11,7 +11,7 @@ import {
   type Deployment
 } from "../provider/provider.ts"
 import { capabilitiesOf, type AccessMode, type Capabilities } from "../provider/capabilities.ts"
-import type { ProviderError } from "../provider/errors.ts"
+import type { TransferError, ProviderError } from "../provider/errors.ts"
 import type { AppStoreError, DeploymentTimeoutError } from "./errors.ts"
 import { DeploymentTimeoutError as TimeoutError } from "./errors.ts"
 import { TenantAppStore } from "./appStore.ts"
@@ -30,17 +30,7 @@ export interface DeleteAppOptions {
 export interface WaitOptions {
   /** How often to ask, and for how long. Must be bounded. */
   readonly schedule?: Schedule.Schedule<unknown>
-  /**
-   * How many consecutive failed polls to ride out before giving up.
-   *
-   * A failed status check is not a failed deployment. The build is almost
-   * certainly still running while the provider rate-limits us or drops a
-   * request, and abandoning the wait turns their bad minute into our failure.
-   * Defaults to 3, the same tolerance the consumer settled on.
-   *
-   * Distinct from transport retry, which makes a single call survive a blip
-   * over seconds. This rides out a call that failed even after those retries.
-   */
+
   readonly tolerateFailures?: number
 }
 
@@ -59,47 +49,24 @@ export interface PlatformApi {
     /** Resolve an app deploykit already knows about. */
     readonly get: (id: string) => Effect.Effect<App, ProviderError>
 
-    /**
-     * Remove a tenant's app.
-     *
-     * The mapping goes too, or the next getOrCreate resolves an id the
-     * provider no longer has. Offboarding is the ordinary reason a SaaS
-     * deletes an app, so it belongs here rather than only on the adapter.
-     */
     readonly delete: (
       options: DeleteAppOptions
     ) => Effect.Effect<void, ProviderError | AppStoreError>
 
-    /**
-     * Restrict who may open this app's deployments.
-     *
-     * Absent when the provider has no access model; `capabilities.accessModes`
-     * says which modes it accepts.
-     */
     readonly setAccess?: (
       id: string,
       access: Access
     ) => Effect.Effect<void, ProviderError | UnsupportedError>
   }
 
-  readonly deploy: (app: App, options: DeployOptions) => Effect.Effect<Deployment, ProviderError>
+  readonly deploy: (
+    app: App,
+    options: DeployOptions
+  ) => Effect.Effect<Deployment, ProviderError | TransferError | UnsupportedError>
 
   readonly deployments: {
     readonly get: (appId: string, deploymentId: string) => Effect.Effect<Deployment, ProviderError>
 
-    /**
-     * Poll until the provider says the deployment has stopped moving.
-     *
-     * That is all it means. It does NOT mean the URL serves: the provider
-     * assigns the domain after the deployment finishes, so `url` can 404 for a
-     * moment afterwards. Checking that is deliberately left to the caller,
-     * because a protected deployment answers 401 to us while being perfectly
-     * healthy for its real audience, and because "did the build fail" and "is
-     * the CDN slow" are better as two questions than one ambiguous answer.
-     *
-     * The schedule is a parameter so a test can pass a zero-delay one; it must
-     * be bounded, or a stuck build leaks a fiber per tenant.
-     */
     readonly waitUntilReady: (
       appId: string,
       deploymentId: string,
@@ -108,12 +75,6 @@ export interface PlatformApi {
   }
 }
 
-/**
- * Losing the race to record a mapping. Deliberately not exported: it is an
- * internal control-flow signal, caught a few lines after it is raised, and it
- * never reaches a caller. The error channel is a control-flow mechanism, not
- * only a way to report failure.
- */
 class AppAlreadyRecordedError extends Schema.TaggedError<AppAlreadyRecordedError>()(
   "AppAlreadyRecordedError",
   {
@@ -140,11 +101,6 @@ export const layer = Layer.effect(
       apps: {
         get: (id: string) => provider.getApp(id),
 
-        /**
-         * Provider first, then the store. If the provider fails the mapping
-         * stays, which is recoverable: the next call resolves the app again.
-         * Forgetting first would strand an app nothing points at.
-         */
         delete: (options: DeleteAppOptions) =>
           Effect.gen(function* () {
             yield* provider.deleteApp(options.appId)
@@ -162,11 +118,6 @@ export const layer = Layer.effect(
                       ? "password"
                       : "sso"
 
-                /**
-                 * Refuse a mode the provider does not declare, rather than
-                 * letting it fail somewhere in the adapter as a generic
-                 * error. The caller can act on this one.
-                 */
                 return capabilities.accessModes.has(mode)
                   ? provider.setAccess!(id, access)
                   : Effect.fail(
@@ -186,16 +137,6 @@ export const layer = Layer.effect(
               return yield* provider.getApp(storedId.value)
             }
 
-            /**
-             * Nothing recorded, but an app may still exist: a previous create
-             * whose mapping never landed, and whose compensating delete also
-             * failed. Adopt it rather than create a duplicate.
-             *
-             * Only possible where the provider can resolve by name, so this is
-             * a capability, not an assumption. Note there is no compensating
-             * delete on this path: we did not create the app, so it is not ours
-             * to remove if recording the mapping fails.
-             */
             if (provider.findAppByName !== undefined) {
               const existing = yield* provider.findAppByName(options.name)
               if (Option.isSome(existing)) {
@@ -227,11 +168,6 @@ export const layer = Layer.effect(
                 ),
               (app, exit) => (Exit.isFailure(exit) ? provider.deleteApp(app.id) : Effect.void)
             ).pipe(
-              /**
-               * Losing the race is reported as a failure so the release above
-               * deletes the app we redundantly created, reusing the cleanup path
-               * rather than writing a second one. Then we adopt the winner.
-               */
               Effect.catchTag("AppAlreadyRecordedError", error => provider.getApp(error.appId))
             )
           })
@@ -267,12 +203,6 @@ export const layer = Layer.effect(
               )
             )
 
-            /**
-             * repeat runs once, then repeats until the predicate holds or the
-             * schedule runs out. Stopping on a terminal status is the happy
-             * path; stopping on too many consecutive misses is giving up; the
-             * schedule running out is the timeout.
-             */
             const last = yield* tick.pipe(
               Effect.repeat({
                 until: outcome =>

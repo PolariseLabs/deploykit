@@ -1,18 +1,6 @@
-/**
- * Waiting for a deployment's URL to actually answer.
- *
- * Deliberately separate from `waitUntilReady`, which asks the provider whether
- * a deployment finished. That is a different question with a different answer:
- * a URL 404s for a moment after READY while its domain is assigned, and a
- * protected deployment answers 401 to you while being perfectly healthy for
- * the people it is meant for.
- *
- * So this is opt-in, and the caller decides what counts as serving. Most want
- * the default. A caller behind deployment protection wants to accept a 401, or
- * not to ask at all.
- */
+/** Poll serving readiness separately from provider status and activation. */
 
-import { Duration, Effect, Schedule, Schema } from "effect"
+import { Clock, Effect, Schedule, Schema } from "effect"
 
 export class NotServingError extends Schema.TaggedError<NotServingError>()("NotServingError", {
   url: Schema.String,
@@ -22,32 +10,20 @@ export class NotServingError extends Schema.TaggedError<NotServingError>()("NotS
 }) {}
 
 export interface ServingOptions {
-  /**
-   * Whether a response means the deployment is serving. The default accepts
-   * any 2xx and keeps waiting through 404 and 5xx, which is the propagation
-   * window rather than a failure.
-   */
+  /** Defaults to accepting 2xx responses. */
   readonly accept?: (status: number) => boolean
-  /** How often to ask, and for how long. Must be bounded. */
+  /** Poll spacing and optional attempt limit; the overall deadline still applies. */
   readonly schedule?: Schedule.Schedule<unknown>
-  /** Defaults to the global fetch, so a caller can supply their own. */
+  /** Overall deadline, including requests and cleanup; defaults to 60,000 ms. */
+  readonly timeoutMs?: number
+  /** Custom transports must honour the supplied abort signal. */
   readonly fetch?: typeof globalThis.fetch
 }
 
 const isSuccess = (status: number) => status >= 200 && status < 300
+const defaultSchedule = Schedule.spaced("500 millis")
 
-/** A minute of half-second checks: the window observed on Vercel is under 1s. */
-const defaultSchedule = Schedule.spaced("500 millis").pipe(
-  Schedule.upTo({ duration: Duration.minutes(1) })
-)
-
-/**
- * Poll a URL until it serves, or give up.
- *
- * Redirects are not followed. A deployment behind protection answers 302 to a
- * login page, and following it turns "I cannot see this" into a cheerful 200
- * from somewhere else entirely.
- */
+/** Poll without following redirects, which could otherwise mistake a login page for success. */
 export const waitUntilServing = (
   url: string,
   options: ServingOptions = {}
@@ -55,29 +31,37 @@ export const waitUntilServing = (
   Effect.gen(function* () {
     const accept = options.accept ?? isSuccess
     const doFetch = options.fetch ?? globalThis.fetch
-    const started = Date.now()
-
-    const probe = Effect.promise(() =>
-      doFetch(url, { redirect: "manual" }).then(
-        response => response.status,
-        () => undefined
-      )
-    )
-
-    const status = yield* probe.pipe(
-      Effect.repeat({
-        until: seen => seen !== undefined && accept(seen),
-        schedule: options.schedule ?? defaultSchedule
-      })
-    )
-
-    if (status === undefined || !accept(status)) {
-      return yield* new NotServingError({
+    const started = yield* Clock.currentTimeMillis
+    const timeoutMs = options.timeoutMs ?? 60000
+    let seen: number | undefined
+    const failure = Effect.gen(function* () {
+      return new NotServingError({
         url,
-        ...(status !== undefined ? { status } : {}),
-        waitedMs: Date.now() - started
+        ...(seen === undefined ? {} : { status: seen }),
+        waitedMs: (yield* Clock.currentTimeMillis) - started
       })
-    }
+    }).pipe(Effect.flatMap(Effect.fail))
+    if (!Number.isSafeInteger(timeoutMs) || timeoutMs <= 0) return yield* failure
 
-    return status
+    const probe = Effect.tryPromise(async signal => {
+      const response = await doFetch(url, { redirect: "manual", signal })
+      seen = response.status
+      await response.body?.cancel().catch(() => undefined)
+      return response.status
+    }).pipe(
+      Effect.timeout("30 seconds"),
+      Effect.catch(() => Effect.void)
+    )
+
+    return yield* probe.pipe(
+      Effect.repeat({
+        until: status => status !== undefined && accept(status),
+        schedule: options.schedule ?? defaultSchedule
+      }),
+      Effect.flatMap(status =>
+        status !== undefined && accept(status) ? Effect.succeed(status) : failure
+      ),
+      Effect.timeout(timeoutMs),
+      Effect.catchTag("TimeoutError", () => failure)
+    )
   })

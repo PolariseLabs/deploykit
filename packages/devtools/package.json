@@ -1,0 +1,35 @@
+{
+  "name": "@deploykit/devtools",
+  "version": "0.1.0-alpha.1",
+  "description": "Local deployment telemetry and debugging for deploykit.",
+  "type": "module",
+  "license": "MIT",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "LICENSE"
+  ],
+  "sideEffects": false,
+  "scripts": {
+    "build": "tsc --build"
+  },
+  "dependencies": {
+    "@deploykit/core": "workspace:*",
+    "effect": "4.0.0-rc.112",
+    "@effect/platform-node": "4.0.0-rc.112"
+  },
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "publishConfig": {
+    "access": "public",
+    "tag": "alpha"
+  }
+}

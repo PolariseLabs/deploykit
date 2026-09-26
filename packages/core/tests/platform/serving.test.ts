@@ -1,5 +1,6 @@
 import { assert, describe, it } from "@effect/vitest"
-import { Effect, Schedule } from "effect"
+import { Deferred, Effect, Fiber, Schedule } from "effect"
+import { TestClock } from "effect/testing"
 import { waitUntilServing } from "../../src/platform/serving.ts"
 
 /** Zero delay so the retry behaviour is testable without waiting. */
@@ -121,3 +122,71 @@ describe("waitUntilServing", () => {
     })
   )
 })
+
+it.effect("the overall deadline aborts a stalled probe", () =>
+  Effect.gen(function* () {
+    const started = yield* Deferred.make<void>()
+    let aborted = false
+    const fetcher: typeof fetch = (_url, init) =>
+      new Promise((_resolve, reject) => {
+        init?.signal?.addEventListener("abort", () => {
+          aborted = true
+          reject(new Error("aborted"))
+        })
+        Deferred.doneUnsafe(started, Effect.void)
+      })
+    const task = yield* waitUntilServing("https://x.test", {
+      fetch: fetcher,
+      timeoutMs: 1000
+    }).pipe(Effect.flip, Effect.forkChild)
+    yield* Deferred.await(started)
+    yield* TestClock.adjust("1 second")
+    const error = yield* Fiber.join(task)
+    assert.strictEqual(error._tag, "NotServingError")
+    assert.strictEqual(error.waitedMs, 1000)
+    assert.isTrue(aborted)
+  })
+)
+
+it.effect("caller interruption aborts the active probe", () =>
+  Effect.gen(function* () {
+    const started = yield* Deferred.make<void>()
+    let aborted = false
+    const task = yield* waitUntilServing("https://x.test", {
+      fetch: (_url, init) =>
+        new Promise((_resolve, reject) => {
+          init?.signal?.addEventListener("abort", () => {
+            aborted = true
+            reject(new Error("aborted"))
+          })
+          Deferred.doneUnsafe(started, Effect.void)
+        })
+    }).pipe(Effect.forkChild)
+    yield* Deferred.await(started)
+    yield* Fiber.interrupt(task)
+    assert.isTrue(aborted)
+  })
+)
+
+it.effect("closes response bodies on rejected and accepted statuses", () =>
+  Effect.gen(function* () {
+    let cancelled = 0
+    let requests = 0
+    const status = yield* waitUntilServing("https://x.test", {
+      schedule: instant,
+      fetch: async () =>
+        new Response(
+          new ReadableStream({
+            cancel: () => {
+              cancelled++
+            }
+          }),
+          {
+            status: ++requests === 1 ? 404 : 200
+          }
+        )
+    })
+    assert.strictEqual(status, 200)
+    assert.strictEqual(cancelled, 2)
+  })
+)

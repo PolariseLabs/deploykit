@@ -9,13 +9,6 @@ export class DuplicatePathError extends Schema.TaggedError<DuplicatePathError>()
   }
 ) {}
 
-/**
- * An ordered set of files to deploy, keyed by destination path.
- *
- * A Map rather than an array: O(1) duplicate detection, and Maps iterate in
- * insertion order, which is the deterministic iteration adapters depend on.
- * Artifacts are immutable, so every operation returns a new one.
- */
 export interface Artifact {
   readonly entries: ReadonlyMap<ArtifactPath, Entry>
 }
@@ -36,13 +29,12 @@ export const add = (artifact: Artifact, entry: Entry) => {
 /** Folds entries into one artifact, failing on the first duplicate. */
 export const make = (entries: ReadonlyArray<Entry>) => {
   return Effect.gen(function* () {
-    let artifact = empty
-
+    const result = new Map<ArtifactPath, Entry>()
     for (const entry of entries) {
-      artifact = yield* add(artifact, entry)
+      if (result.has(entry.path)) return yield* new DuplicatePathError({ path: entry.path })
+      result.set(entry.path, entry)
     }
-
-    return artifact
+    return { entries: result }
   })
 }
 

@@ -1,9 +1,3 @@
-/**
- * Pinning a removal. Vercel's createDeployment takes a deploymentId, and a
- * real deploy showed that naming an existing one creates a SECOND
- * deployment rather than continuing the first. deploykit does not expose
- * it, because an option called resume that duplicates is worse than none.
- */
 it.effect("sends no deploymentId, because naming one would duplicate", () =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem
@@ -17,7 +11,7 @@ it.effect("sends no deploymentId, because naming one would duplicate", () =>
 
 import { assert, describe, it } from "@effect/vitest"
 import { NodeFileSystem } from "@effect/platform-node"
-import { Effect, FileSystem } from "effect"
+import { Deferred, Effect, Fiber, FileSystem } from "effect"
 import { Artifact, Entry, Provider } from "@deploykit/core"
 import { bytesOf, deployToVercelProject } from "../src/services/deployments.ts"
 import { getDeployment } from "../src/services/status.ts"
@@ -65,13 +59,7 @@ it.layer(NodeFileSystem.layer)("with a filesystem", it => {
       })
     )
 
-    /**
-     * A source that existed at compose time and is gone by upload time. The
-     * entry is valid when built, so this is the genuine race rather than a
-     * path that was never there, and it must surface as a ProviderError
-     * rather than a raw PlatformError from the filesystem.
-     */
-    it.effect("surfaces a source that vanished as a ProviderError", () =>
+    it.effect("surfaces a source that vanished as a SourceError", () =>
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem
         const dir = yield* fs.makeTempDirectoryScoped()
@@ -84,19 +72,14 @@ it.layer(NodeFileSystem.layer)("with a filesystem", it => {
 
         const error = yield* Effect.flip(deployToVercelProject(stub.client, fs, "prj_1", artifact))
 
-        assert.strictEqual(error._tag, "ProviderError")
-        assert.strictEqual(error.provider, "vercel")
-        assert.strictEqual(error.appId, "prj_1")
+        assert.strictEqual(error._tag, "SourceError")
+        if (error._tag !== "SourceError") throw error
+        assert.strictEqual(error.reference, "here.txt")
       })
     )
   })
 
   describe("deployToVercelProject", () => {
-    /**
-     * The manifest goes first. Uploading before asking costs a read and a
-     * transfer per file even when Vercel already holds the bytes, which on a
-     * republish is most of the tree.
-     */
     it.effect("uploads nothing when Vercel accepts the manifest", () =>
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem
@@ -157,7 +140,7 @@ it.layer(NodeFileSystem.layer)("with a filesystem", it => {
         const artifact = yield* Artifact.make([
           yield* Entry.deferred("big.bin", {
             byteLength: 1024,
-            digests: { sha1: "deadbeef" },
+            digests: { sha1: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" },
             read: () => {
               reads += 1
               return Promise.resolve(new Uint8Array(1024))
@@ -168,7 +151,10 @@ it.layer(NodeFileSystem.layer)("with a filesystem", it => {
         yield* deployToVercelProject(stub.client, fs, "prj_1", artifact)
 
         assert.strictEqual(reads, 0, "the whole point: no fetch, no hash")
-        assert.strictEqual(stub.deployRequests[0]?.files[0]?.sha, "deadbeef")
+        assert.strictEqual(
+          stub.deployRequests[0]?.files[0]?.sha,
+          "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        )
         assert.strictEqual(stub.deployRequests[0]?.files[0]?.size, 1024)
       }).pipe(Effect.provide(NodeFileSystem.layer))
     )
@@ -176,12 +162,14 @@ it.layer(NodeFileSystem.layer)("with a filesystem", it => {
     it.effect("reads a deferred entry when it is actually missing", () =>
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem
-        const stub = stubClient({ missingOnFirstDeploy: ["deadbeef"] })
+        const stub = stubClient({
+          missingOnFirstDeploy: ["7037807198c22a7d2b0807371d763779a84fdfcf"]
+        })
         let reads = 0
         const artifact = yield* Artifact.make([
           yield* Entry.deferred("big.bin", {
             byteLength: 3,
-            digests: { sha1: "deadbeef" },
+            digests: { sha1: "7037807198c22a7d2b0807371d763779a84fdfcf" },
             read: () => {
               reads += 1
               return Promise.resolve(new Uint8Array([1, 2, 3]))
@@ -236,6 +224,7 @@ it.layer(NodeFileSystem.layer)("with a filesystem", it => {
           deployToVercelProject(stub.client, fs, "prj_1", Artifact.empty)
         )
 
+        if (error._tag !== "ProviderError") throw error
         assert.strictEqual(error.message, "rate limited")
         assert.strictEqual(error.appId, "prj_1")
         assert.strictEqual(error.provider, "vercel")
@@ -294,10 +283,6 @@ it.layer(NodeFileSystem.layer)("with a filesystem", it => {
 })
 
 describe("getDeployment", () => {
-  /**
-   * The whole point of the adapter: Vercel's seven states collapse onto the
-   * four portable ones, so a caller never has to know what BLOCKED means.
-   */
   const cases: ReadonlyArray<readonly [VercelReadyState, string]> = [
     ["QUEUED", "pending"],
     ["INITIALIZING", "pending"],
@@ -343,11 +328,6 @@ describe("getDeployment", () => {
 })
 
 describe("the deployment request", () => {
-  /**
-   * The whole reason for dropping the SDK. A deployment created without
-   * prebuilt is treated as source and built, so these two flags are the
-   * difference between deploying an artifact and asking Vercel to compile one.
-   */
   it.effect("asks for a prebuilt deployment and skips framework confirmation", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem
@@ -450,12 +430,6 @@ describe("error detail", () => {
 })
 
 describe("digests are provider-keyed", () => {
-  /**
-   * Cloudflare Pages hashes sha256 over base64 content plus the extension, so
-   * a digest stored for one provider means nothing to another. An adapter
-   * that finds no key it recognises reads and hashes as usual rather than
-   * trusting a hash computed for someone else.
-   */
   it.effect("ignores a digest computed for a different provider", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem
@@ -489,11 +463,6 @@ describe("what a caller can control and see", () => {
     }
   }
 
-  /**
-   * the consumer needs all three of these and none were reachable through the
-   * portable contract until now: the adapter supported them, Provider.deploy
-   * took only an artifact.
-   */
   it.effect("carries target and meta from the portable options", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem
@@ -568,3 +537,85 @@ describe("what a caller can control and see", () => {
     }).pipe(Effect.provide(NodeFileSystem.layer))
   )
 })
+it.effect("reports acknowledged files before the upload batch finishes", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem
+    const stub = stubClient({ digestComplaintOnFirstDeploy: true })
+    const events: Array<Provider.DeployProgress> = []
+    const uploaded = yield* Deferred.make<void>()
+    const release = yield* Deferred.make<void>()
+    let calls = 0
+    const client = {
+      ...stub.client,
+      uploadFile: (sha: string, bytes: Uint8Array) =>
+        Effect.gen(function* () {
+          calls++
+          if (calls === 2) yield* Deferred.await(release)
+          yield* stub.client.uploadFile(sha, bytes)
+        })
+    }
+    const artifact = yield* Artifact.make([
+      yield* Entry.text("a.txt", "hi"),
+      yield* Entry.text("b.txt", "bye")
+    ])
+    const fiber = yield* deployToVercelProject(client, fs, "prj_1", artifact, {
+      onProgress: event =>
+        Effect.gen(function* () {
+          events.push(event)
+          if (event._tag === "Uploading" && event.done === 1)
+            yield* Deferred.succeed(uploaded, undefined)
+        })
+    }).pipe(Effect.forkChild)
+    yield* Deferred.await(uploaded)
+    assert.isFalse(events.some(event => event._tag === "Created"))
+    const partial = events.find(event => event._tag === "Uploading" && event.done === 1)
+    assert(partial?._tag === "Uploading")
+    assert.equal(partial.bytes, 2)
+    yield* Deferred.succeed(release, undefined)
+    yield* Fiber.join(fiber)
+    const complete = events.filter(event => event._tag === "Uploading").at(-1)
+    assert.equal(complete?.bytes, 5)
+  }).pipe(Effect.provide(NodeFileSystem.layer))
+)
+it.effect("rejects invalid upload concurrency before provider calls", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem
+    for (const uploadConcurrency of [0, -1, 1.5, 33, Number.NaN]) {
+      const stub = stubClient()
+      const error = yield* Effect.flip(
+        deployToVercelProject(stub.client, fs, "prj_1", Artifact.empty, { uploadConcurrency })
+      )
+      assert.equal(error._tag, "ValidationError")
+      assert.equal(stub.deployRequests.length, 0)
+    }
+  }).pipe(Effect.provide(NodeFileSystem.layer))
+)
+it.effect("largest-first scheduling preserves deployment paths and limits parallel uploads", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem
+    const stub = stubClient({ digestComplaintOnFirstDeploy: true })
+    const sizes: Array<number> = []
+    const client = {
+      ...stub.client,
+      uploadFile: (sha: string, bytes: Uint8Array) =>
+        Effect.sync(() => {
+          sizes.push(bytes.byteLength)
+        }).pipe(Effect.andThen(stub.client.uploadFile(sha, bytes)))
+    }
+    const artifact = yield* Artifact.make([
+      yield* Entry.text("small.txt", "a"),
+      yield* Entry.text("large.txt", "bbb"),
+      yield* Entry.text("medium.txt", "cc")
+    ])
+    yield* deployToVercelProject(client, fs, "prj_1", artifact, {
+      uploadConcurrency: 1,
+      uploadOrder: "largest-first"
+    })
+    assert.deepStrictEqual(sizes, [3, 2, 1])
+    for (const request of stub.deployRequests)
+      assert.deepStrictEqual(
+        request.files.map(file => file.file),
+        ["small.txt", "large.txt", "medium.txt"]
+      )
+  }).pipe(Effect.provide(NodeFileSystem.layer))
+)
