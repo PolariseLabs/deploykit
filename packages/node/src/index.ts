@@ -9,11 +9,13 @@ export {
   TransferLimitError,
   UploadError,
   ValidationError,
-  UnsupportedError
+  UnsupportedError,
+  recoveryOf
 } from "@deploykit/core/provider"
 export { DeploymentFailedError, DeploymentTimeoutError } from "@deploykit/core/platform"
 export { NotServingError } from "@deploykit/core/platform"
 export type {
+  Recovery,
   Deployment,
   Access,
   Activation,

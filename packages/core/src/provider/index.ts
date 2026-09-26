@@ -4,3 +4,4 @@ export * from "./retry.js"
 export * from "./provider.js"
 
 export * from "./failure.js"
+export * from "./recovery.js"
