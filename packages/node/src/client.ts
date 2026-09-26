@@ -7,6 +7,11 @@ import * as Telemetry from "@deploykit/core/telemetry"
 import { callback, ClientClosedError, rejectIfAborted, unwrap } from "./runtime.js"
 import type { RunOptions } from "./runtime.js"
 
+export interface GateOption {
+  /** Shares request rate with other processes using the same token, e.g. through Redis. */
+  readonly gate?: Provider.PromiseRequestGate
+}
+
 export interface ClientOptions extends Deploykit.Limits {
   readonly onEvent?: (event: Telemetry.Event) => void | Promise<void>
 }

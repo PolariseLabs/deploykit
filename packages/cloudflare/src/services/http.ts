@@ -36,12 +36,15 @@ export interface CloudflareHttpConfig {
   readonly retry?: Provider.RetryOptions
   readonly timeoutMs?: number
   readonly previewBranch?: string
+  /** Shares request rate with other processes using the same token. */
+  readonly gate?: Provider.RequestGate
 }
 
 export const makeCloudflareClient = (config: CloudflareHttpConfig): CloudflareClient => {
   const baseUrl = config.baseUrl ?? CLOUDFLARE_API
   const doFetch = config.fetch ?? globalThis.fetch
   const account = `/accounts/${encodeURIComponent(config.accountId)}`
+  const gate = config.gate ?? Provider.openGate
 
   const retrySafe = Provider.retryIdempotent(config.retry)
   const retryCreate = <A, E>(effect: Effect.Effect<A, E>) => effect
@@ -64,12 +67,15 @@ export const makeCloudflareClient = (config: CloudflareHttpConfig): CloudflareCl
         Effect.scoped(
           Effect.gen(function* () {
             const options = Effect.isEffect(init) ? yield* init : init
+            yield* gate.acquire(operation)
             const { response, text } = yield* fetchText(doFetch, `${baseUrl}${path}`, options).pipe(
               Effect.mapError(
                 () =>
                   new CloudflareApiError({ operation, message: `${operation} transport failed` })
               )
             )
+            if (response.status === 429)
+              yield* gate.backoff(retryAfter(response.headers.get("retry-after")) ?? 1000)
             const parsed = ((): unknown => {
               try {
                 return JSON.parse(text)

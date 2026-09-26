@@ -15,6 +15,7 @@ export {
 export { DeploymentFailedError, DeploymentTimeoutError } from "@deploykit/core/platform"
 export { NotServingError } from "@deploykit/core/platform"
 export type {
+  PromiseRequestGate,
   Recovery,
   Deployment,
   Access,

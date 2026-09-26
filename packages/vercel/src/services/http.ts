@@ -27,6 +27,8 @@ export interface VercelHttpConfig {
   readonly uploadThrottle?: UploadThrottle
   readonly retry?: Provider.RetryOptions
   readonly timeoutMs?: number
+  /** Shares request rate with other processes using the same token. */
+  readonly gate?: Provider.RequestGate
 }
 
 /** Built once: decoding is on the hot path for every poll. */
@@ -40,6 +42,7 @@ export const makeVercelClient = (config: VercelHttpConfig): VercelClient => {
   const auth = { Authorization: `Bearer ${config.token}` }
 
   const throttle = makeUploadThrottle(config.uploadThrottle)
+  const gate = config.gate ?? Provider.openGate
   const retrySafe = Provider.retryIdempotent(config.retry)
   const retryCreate = <A, E>(effect: Effect.Effect<A, E>) => effect
 
@@ -65,6 +68,7 @@ export const makeVercelClient = (config: VercelHttpConfig): VercelClient => {
       Effect.scoped(
         Effect.gen(function* () {
           const options = Effect.isEffect(init) ? yield* init : init
+          yield* gate.acquire(operation)
           return yield* fetchText(doFetch, href, options)
         })
       ).pipe(
@@ -89,6 +93,7 @@ export const makeVercelClient = (config: VercelHttpConfig): VercelClient => {
                 : { requestId: response.headers.get("x-vercel-id")! }),
               ...(retryAfterMs === undefined ? {} : { retryAfterMs })
             }
+            if (response.status === 429) yield* gate.backoff(retryAfterMs ?? 1000)
             if (operation === "uploadFile" && response.status === 429) {
               yield* throttle.cooldown(retryAfterMs ?? 1000)
             }
