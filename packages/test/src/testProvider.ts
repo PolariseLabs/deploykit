@@ -35,6 +35,7 @@ export interface DeploymentRecord {
   readonly operationId?: string
 
   readonly deployment: Provider.Deployment
+  readonly target: "production" | "preview"
   readonly artifact: Artifact.Artifact
   readonly buildFails: boolean
   readonly stuck: boolean
@@ -228,6 +229,7 @@ export const make = (config: TestProviderConfig = {}): Effect.Effect<TestProvide
           })
           const record: DeploymentRecord = {
             deployment,
+            target: options.target ?? "production",
             artifact,
             ...(options.operationId === undefined ? {} : { operationId: options.operationId }),
             buildFails: failBuild.has(appId),
@@ -337,6 +339,52 @@ export const make = (config: TestProviderConfig = {}): Effect.Effect<TestProvide
             state: values.get(appId) === deploymentId ? ("active" as const) : ("unknown" as const)
           }))
         ),
+      listDeployments: (appId: string, options?: Provider.ListDeploymentsOptions) =>
+        Ref.get(state).pipe(
+          Effect.map(current =>
+            [...current.deployments.values()]
+              .filter(
+                record =>
+                  record.deployment.appId === appId &&
+                  (options?.target === undefined || record.target === options.target)
+              )
+              .reverse()
+              .slice(0, Provider.listLimit(options))
+              .map(record => record.deployment)
+          )
+        ),
+      deleteDeployment: (appId: string, deploymentId: string) =>
+        Effect.gen(function* () {
+          const record = (yield* Ref.get(state)).deployments.get(deploymentId)
+          if (record?.deployment.appId !== appId)
+            return yield* failure(`no deployment "${deploymentId}"`, { appId, deploymentId })
+          if ((yield* Ref.get(active)).get(appId) === deploymentId)
+            return yield* new Provider.UnsupportedError({
+              provider: "test",
+              capability: "deleteDeployment",
+              message: "The deployment serving production cannot be deleted"
+            })
+          yield* Ref.update(state, current => {
+            const deployments = new Map(current.deployments)
+            deployments.delete(deploymentId)
+            return { ...current, deployments }
+          })
+        }),
+      rollback: (appId: string, deploymentId: string) =>
+        Effect.gen(function* () {
+          const record = (yield* Ref.get(state)).deployments.get(deploymentId)
+          if (
+            record?.deployment.appId !== appId ||
+            record.deployment.status !== "deployed" ||
+            record.target !== "production"
+          )
+            return yield* failure("Rollback needs a ready production deployment", {
+              appId,
+              deploymentId
+            })
+          yield* Ref.update(active, values => new Map(values).set(appId, deploymentId))
+          return { appId, deploymentId, state: "active" as const }
+        }),
       createApp,
       getApp,
       deleteApp,

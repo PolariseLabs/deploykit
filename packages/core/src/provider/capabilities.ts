@@ -12,6 +12,10 @@ export interface Capabilities {
 
   readonly adoptByName: boolean
 
+  readonly listDeployments: boolean
+  readonly deleteDeployment: boolean
+  readonly rollback: boolean
+
   readonly accessModes: ReadonlySet<AccessMode>
 }
 
@@ -23,5 +27,8 @@ export const capabilitiesOf = (provider: ControlPlane): Capabilities => ({
   previewDeployments: provider.previewDeployments === true,
   reconciliation: provider.reconcileDeployment !== undefined,
   adoptByName: provider.findAppByName !== undefined,
+  listDeployments: provider.listDeployments !== undefined,
+  deleteDeployment: provider.deleteDeployment !== undefined,
+  rollback: provider.rollback !== undefined,
   accessModes: provider.accessModes ?? new Set()
 })

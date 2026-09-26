@@ -87,6 +87,9 @@ const make = (limits: Limits) =>
       activateDeployment: optional("activation", provider.activateDeployment),
       getActivation: optional("activation", provider.getActivation),
       reconcileDeployment: optional("reconciliation", provider.reconcileDeployment),
+      listDeployments: optional("listDeployments", provider.listDeployments),
+      deleteDeployment: optional("deleteDeployment", provider.deleteDeployment),
+      rollback: optional("rollback", provider.rollback),
       deploy,
       deployAndWait,
       waitUntilReady: (appId: string, deploymentId: string, options?: WaitOptions) =>

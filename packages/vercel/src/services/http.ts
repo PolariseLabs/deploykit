@@ -32,6 +32,7 @@ export interface VercelHttpConfig {
 /** Built once: decoding is on the hot path for every poll. */
 const decodeProject = Schema.decodeUnknownOption(vercelProject)
 const decodeDeployment = Schema.decodeUnknownOption(vercelDeployment)
+const isReadyState = Schema.is(vercelReadyState)
 
 export const makeVercelClient = (config: VercelHttpConfig): VercelClient => {
   const baseUrl = config.baseUrl ?? VERCEL_API
@@ -203,6 +204,52 @@ export const makeVercelClient = (config: VercelHttpConfig): VercelClient => {
             }))
         }))
       ),
+    listDeployments: (projectId, { target, limit }) =>
+      json(
+        "listDeployments",
+        Schema.decodeUnknownOption(
+          Schema.Struct({
+            deployments: Schema.Array(
+              Schema.Struct({
+                uid: Schema.String,
+                name: Schema.String,
+                // A string, not the ready-state literals: DELETED entries are skipped, not fatal.
+                readyState: Schema.String,
+                url: Schema.optional(Schema.NullOr(Schema.String)),
+                target: Schema.optional(Schema.NullOr(Schema.String))
+              })
+            )
+          })
+        ),
+        url("/v7/deployments", {
+          projectId,
+          limit: String(limit),
+          ...(target === undefined ? {} : { target })
+        }),
+        { headers: auth }
+      ).pipe(
+        Effect.map(result =>
+          result.deployments.flatMap(item =>
+            isReadyState(item.readyState) && (target !== "preview" || item.target !== "production")
+              ? [
+                  {
+                    id: item.uid,
+                    name: item.name,
+                    readyState: item.readyState,
+                    projectId,
+                    ...(item.target == null ? {} : { target: item.target }),
+                    ...(item.url == null ? {} : { url: item.url })
+                  }
+                ]
+              : []
+          )
+        )
+      ),
+    deleteDeployment: deploymentId =>
+      request("deleteDeployment", url(`/v13/deployments/${encodeURIComponent(deploymentId)}`), {
+        method: "DELETE",
+        headers: auth
+      }).pipe(Effect.asVoid),
     createProject: name =>
       json(
         "createProject",

@@ -7,6 +7,11 @@ import {
   getPagesProject
 } from "./services/app.js"
 import { getPagesDeployment } from "./services/read.js"
+import {
+  deletePagesDeployment,
+  listPagesDeployments,
+  rollbackPagesDeployment
+} from "./services/manage.js"
 import { makeCloudflareClient } from "./services/http.js"
 import type { CloudflareClient } from "./services/client.js"
 
@@ -17,7 +22,16 @@ export const makeCloudflareControl = (cloudflare: CloudflareClient): Provider.Co
   getApp: id => getPagesProject(cloudflare, id),
   deleteApp: id => deletePagesProject(cloudflare, id),
   findAppByName: name => findPagesProjectByName(cloudflare, name),
-  getDeployment: (appId, id) => getPagesDeployment(cloudflare, appId, id)
+  getDeployment: (appId, id) => getPagesDeployment(cloudflare, appId, id),
+  ...(cloudflare.listDeployments === undefined
+    ? {}
+    : { listDeployments: (appId, options) => listPagesDeployments(cloudflare, appId, options) }),
+  ...(cloudflare.deleteDeployment === undefined
+    ? {}
+    : { deleteDeployment: (appId, id) => deletePagesDeployment(cloudflare, appId, id) }),
+  ...(cloudflare.rollbackDeployment === undefined
+    ? {}
+    : { rollback: (appId, id) => rollbackPagesDeployment(cloudflare, appId, id) })
 })
 
 export const cloudflareClientFromConfig = Effect.gen(function* () {

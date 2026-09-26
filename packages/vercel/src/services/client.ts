@@ -105,6 +105,13 @@ export interface VercelClient {
     VercelApiError
   >
 
+  /** GET /v7/deployments for one project, newest first. Deleted deployments are left out. */
+  readonly listDeployments?: (
+    projectId: string,
+    options: { readonly target?: "production" | "preview"; readonly limit: number }
+  ) => Effect.Effect<ReadonlyArray<VercelDeploymentLike>, VercelApiError>
+  readonly deleteDeployment?: (deploymentId: string) => Effect.Effect<void, VercelApiError>
+
   readonly createProject: (name: string) => Effect.Effect<VercelProjectLike, VercelApiError>
   readonly getProject: (idOrName: string) => Effect.Effect<VercelProjectLike, VercelApiError>
   readonly deleteProject: (idOrName: string) => Effect.Effect<void, VercelApiError>

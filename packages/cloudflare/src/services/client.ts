@@ -33,7 +33,9 @@ export const isTransientFailure = (
 export const pagesProject = Schema.Struct({
   id: Schema.String,
   name: Schema.String,
-  production_branch: Schema.optional(Schema.String)
+  production_branch: Schema.optional(Schema.String),
+  /** The deployment serving production right now. */
+  canonical_deployment: Schema.optional(Schema.NullOr(Schema.Struct({ id: Schema.String })))
 })
 export type PagesProject = typeof pagesProject.Type
 
@@ -42,7 +44,8 @@ export const pagesDeployment = Schema.Struct({
   url: Schema.optional(Schema.String),
   project_name: Schema.optional(Schema.String),
   latest_stage: pagesLatestStage,
-  is_skipped: Schema.optional(Schema.Boolean)
+  is_skipped: Schema.optional(Schema.Boolean),
+  environment: Schema.optional(Schema.String)
 })
 export type PagesDeployment = typeof pagesDeployment.Type
 
@@ -73,6 +76,21 @@ export interface CloudflareClient {
   readonly getProject: (name: string) => Effect.Effect<PagesProject, CloudflareApiError>
   readonly deleteProject: (name: string) => Effect.Effect<void, CloudflareApiError>
   readonly getDeployment: (
+    projectName: string,
+    deploymentId: string
+  ) => Effect.Effect<PagesDeployment, CloudflareApiError>
+
+  /** One page of a project's deployments, newest first. */
+  readonly listDeployments?: (
+    projectName: string,
+    options: { readonly env?: "production" | "preview"; readonly perPage: number }
+  ) => Effect.Effect<ReadonlyArray<PagesDeployment>, CloudflareApiError>
+  readonly deleteDeployment?: (
+    projectName: string,
+    deploymentId: string
+  ) => Effect.Effect<void, CloudflareApiError>
+  /** Point production back at an earlier successful production deployment. */
+  readonly rollbackDeployment?: (
     projectName: string,
     deploymentId: string
   ) => Effect.Effect<PagesDeployment, CloudflareApiError>

@@ -117,6 +117,21 @@ export const makeClient = <D extends object = object>(
       call(kit => kit.getActivation(appId, deploymentId), options),
     reconcileDeployment: (appId: string, operationId: string, options?: RunOptions) =>
       call(kit => kit.reconcileDeployment(appId, operationId), options),
+    /** One page of an app's deployments, newest first. */
+    listDeployments: (appId: string, options?: Provider.ListDeploymentsOptions & RunOptions) =>
+      call(
+        kit =>
+          kit.listDeployments(appId, {
+            ...(options?.target === undefined ? {} : { target: options.target }),
+            ...(options?.limit === undefined ? {} : { limit: options.limit })
+          }),
+        options
+      ),
+    deleteDeployment: (appId: string, deploymentId: string, options?: RunOptions) =>
+      call(kit => kit.deleteDeployment(appId, deploymentId), options),
+    /** Point production back at an earlier successful production deployment. */
+    rollback: (appId: string, deploymentId: string, options?: RunOptions) =>
+      call(kit => kit.rollback(appId, deploymentId), options),
     deploy: (appId: string, artifact: Artifact.Artifact, options?: DeployOptions<D>) =>
       call(kit => kit.deploy(appId, artifact, deployOptions(options)), options),
     waitUntilReady: (appId: string, deploymentId: string, options?: WaitOptions) =>

@@ -120,7 +120,40 @@ export interface ControlPlane {
     appId: string,
     deploymentId: string
   ) => Effect.Effect<Deployment, ProviderError>
+
+  /** One page of an app's deployments, newest first. */
+  readonly listDeployments?: (
+    appId: string,
+    options?: ListDeploymentsOptions
+  ) => Effect.Effect<ReadonlyArray<Deployment>, ProviderError>
+
+  /** Delete one deployment. Refuses the one currently serving production. */
+  readonly deleteDeployment?: (
+    appId: string,
+    deploymentId: string
+  ) => Effect.Effect<void, ProviderError | UnsupportedError>
+
+  /**
+   * Point production back at an earlier successful production deployment,
+   * without rebuilding. Pick the target with `listDeployments`.
+   */
+  readonly rollback?: (
+    appId: string,
+    deploymentId: string
+  ) => Effect.Effect<Activation, ProviderError | UnsupportedError>
 }
+
+export interface ListDeploymentsOptions {
+  readonly target?: "production" | "preview"
+  /** Clamped to 1 to 100. Defaults to 20. */
+  readonly limit?: number
+}
+
+/** The page size adapters request for `listDeployments`. */
+export const listLimit = ({ limit }: ListDeploymentsOptions = {}) =>
+  limit === undefined || !Number.isFinite(limit)
+    ? 20
+    : Math.min(100, Math.max(1, Math.trunc(limit)))
 
 export type DeployProgress =
   | { readonly _tag: "Hashing"; readonly done: number; readonly total: number }

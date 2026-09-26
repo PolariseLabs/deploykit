@@ -24,6 +24,7 @@ const envelope = Schema.Struct({
 const decodeEnvelope = Schema.decodeUnknownOption(envelope)
 const decodeProject = Schema.decodeUnknownOption(pagesProject)
 const decodeDeployment = Schema.decodeUnknownOption(pagesDeployment)
+const decodeDeployments = Schema.decodeUnknownOption(Schema.Array(pagesDeployment))
 const decodeHashes = Schema.decodeUnknownOption(Schema.Array(Schema.String))
 const decodeToken = Schema.decodeUnknownOption(Schema.Struct({ jwt: Schema.String }))
 
@@ -187,6 +188,32 @@ export const makeCloudflareClient = (config: CloudflareHttpConfig): CloudflareCl
         decodeDeployment,
         `${account}/pages/projects/${encodeURIComponent(projectName)}/deployments/${encodeURIComponent(deploymentId)}`,
         { headers: auth }
+      ),
+
+    listDeployments: (projectName, { env, perPage }) =>
+      call(
+        "listDeployments",
+        decodeDeployments,
+        `${account}/pages/projects/${encodeURIComponent(projectName)}/deployments?${new URLSearchParams(
+          { per_page: String(perPage), ...(env === undefined ? {} : { env }) }
+        )}`,
+        { headers: auth }
+      ),
+
+    deleteDeployment: (projectName, deploymentId) =>
+      call(
+        "deleteDeployment",
+        ignored,
+        `${account}/pages/projects/${encodeURIComponent(projectName)}/deployments/${encodeURIComponent(deploymentId)}`,
+        { method: "DELETE", headers: auth }
+      ).pipe(Effect.asVoid),
+
+    rollbackDeployment: (projectName, deploymentId) =>
+      call(
+        "rollbackDeployment",
+        decodeDeployment,
+        `${account}/pages/projects/${encodeURIComponent(projectName)}/deployments/${encodeURIComponent(deploymentId)}/rollback`,
+        { method: "POST", headers: auth }
       ),
 
     uploadToken: projectName =>
