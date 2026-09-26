@@ -1,5 +1,5 @@
 import type { Context, FileSystem } from "effect"
-import { Effect, Layer, ManagedRuntime, Option } from "effect"
+import { Effect, Layer, ManagedRuntime, Option, Schedule } from "effect"
 import { NodeFileSystem } from "@effect/platform-node"
 import type { Artifact, Provider } from "@deploykit/core"
 import { Deploykit, Manifest, Source } from "@deploykit/core"
@@ -15,6 +15,23 @@ export type DeployOptions<D extends object = object> = Omit<Deploykit.DeployOpti
   RunOptions & {
     readonly onProgress?: (progress: Provider.DeployProgress) => void | Promise<void>
   }
+
+/** How long to poll for a terminal status. Defaults: every second, for up to five minutes. */
+export interface WaitOptions extends RunOptions {
+  readonly intervalMs?: number
+  readonly timeoutMs?: number
+  /** Consecutive provider errors to ride out before failing. Default 3. */
+  readonly tolerateFailures?: number
+}
+
+const toWait = ({
+  intervalMs = 1000,
+  timeoutMs = 300_000,
+  tolerateFailures
+}: WaitOptions = {}) => ({
+  schedule: Schedule.spaced(intervalMs).pipe(Schedule.upTo({ duration: timeoutMs })),
+  ...(tolerateFailures === undefined ? {} : { tolerateFailures })
+})
 
 /** A Promise face over one `Deploykit` layer. Each method runs the matching Effect method. */
 export const makeClient = <D extends object = object>(
@@ -102,6 +119,22 @@ export const makeClient = <D extends object = object>(
       call(kit => kit.reconcileDeployment(appId, operationId), options),
     deploy: (appId: string, artifact: Artifact.Artifact, options?: DeployOptions<D>) =>
       call(kit => kit.deploy(appId, artifact, deployOptions(options)), options),
+    waitUntilReady: (appId: string, deploymentId: string, options?: WaitOptions) =>
+      call(kit => kit.waitUntilReady(appId, deploymentId, toWait(options)), options),
+    /** Deploy, then wait for it to go live. Rejects with `DeploymentFailedError` if it fails. */
+    deployAndWait: (
+      appId: string,
+      artifact: Artifact.Artifact,
+      options?: DeployOptions<D> & { readonly wait?: Omit<WaitOptions, "signal"> }
+    ) =>
+      call(
+        kit =>
+          kit.deployAndWait(appId, artifact, {
+            ...deployOptions(options),
+            wait: toWait(options?.wait)
+          }),
+        options
+      ),
     deployDirectory: (appId: string, directory: string, options?: DeployOptions<D>) =>
       call(kit => kit.deployDirectory(appId, directory, deployOptions(options)), options),
     deployManifest: (

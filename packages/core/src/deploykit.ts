@@ -3,6 +3,8 @@
 import { Context, Effect, FileSystem, Layer } from "effect"
 import * as Artifact from "./artifact/index.js"
 import * as Manifest from "./manifest.js"
+import { DeploymentFailedError } from "./platform/errors.js"
+import { waitUntilReady, type WaitOptions } from "./platform/wait.js"
 import * as Provider from "./provider/index.js"
 import type { FileSource } from "./source.js"
 import { makeStagingBudget } from "./staging.js"
@@ -10,6 +12,10 @@ import { makeBudget } from "./transfer.js"
 
 /** Per-deploy options. Budgets are owned by the layer, so callers cannot pass their own. */
 export type DeployOptions = Omit<Provider.DeployOptions, "transferBudget" | "stagingBudget">
+
+export interface DeployAndWaitOptions extends DeployOptions {
+  readonly wait?: WaitOptions
+}
 
 export interface Limits {
   /** Bytes all concurrent deploys may hold in memory at once. */
@@ -50,6 +56,26 @@ const make = (limits: Limits) =>
         stagingBudget: staging
       })
 
+    /** A `failed` deployment becomes `DeploymentFailedError`; the caller asked for a live one. */
+    const deployAndWait = (
+      appId: string,
+      artifact: Artifact.Artifact,
+      { wait, ...options }: DeployAndWaitOptions = {}
+    ) =>
+      deploy(appId, artifact, options).pipe(
+        Effect.flatMap(created => waitUntilReady(provider, appId, created.id, wait)),
+        Effect.flatMap(deployment =>
+          deployment.status === "failed"
+            ? Effect.fail(
+                new DeploymentFailedError({
+                  deploymentId: deployment.id,
+                  ...(deployment.reason === undefined ? {} : { reason: deployment.reason })
+                })
+              )
+            : Effect.succeed(deployment)
+        )
+      )
+
     return {
       capabilities: Provider.capabilitiesOf(provider),
       createApp: provider.createApp,
@@ -62,6 +88,9 @@ const make = (limits: Limits) =>
       getActivation: optional("activation", provider.getActivation),
       reconcileDeployment: optional("reconciliation", provider.reconcileDeployment),
       deploy,
+      deployAndWait,
+      waitUntilReady: (appId: string, deploymentId: string, options?: WaitOptions) =>
+        waitUntilReady(provider, appId, deploymentId, options),
       deployDirectory: (appId: string, directory: string, options?: DeployOptions) =>
         Artifact.fromDirectory(directory).pipe(
           Effect.provideService(FileSystem.FileSystem, fs),

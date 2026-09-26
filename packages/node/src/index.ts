@@ -1,7 +1,7 @@
 export * from "./files.js"
 export { AbortError, ClientClosedError } from "./runtime.js"
 export type { RunOptions } from "./runtime.js"
-export type { ClientOptions, DeployOptions } from "./client.js"
+export type { ClientOptions, DeployOptions, WaitOptions } from "./client.js"
 export {
   ProviderError,
   SourceError,
@@ -11,6 +11,7 @@ export {
   ValidationError,
   UnsupportedError
 } from "@deploykit/core/provider"
+export { DeploymentFailedError, DeploymentTimeoutError } from "@deploykit/core/platform"
 export { NotServingError } from "@deploykit/core/platform"
 export type {
   Deployment,

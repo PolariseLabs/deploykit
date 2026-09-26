@@ -18,3 +18,13 @@ export class DeploymentTimeoutError extends Schema.TaggedError<DeploymentTimeout
     lastStatus: deploymentStatus
   }
 ) {}
+
+/** The provider finished the deployment and reports it failed, e.g. a rejected build. */
+export class DeploymentFailedError extends Schema.TaggedError<DeploymentFailedError>()(
+  "DeploymentFailedError",
+  {
+    deploymentId: Schema.String,
+    /** The provider's reason, when it gives one. */
+    reason: Schema.optional(Schema.String)
+  }
+) {}

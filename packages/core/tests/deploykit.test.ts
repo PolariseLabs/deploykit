@@ -1,7 +1,7 @@
 import { assert, it } from "@effect/vitest"
 import { NodeFileSystem } from "@effect/platform-node"
-import { Effect, Layer } from "effect"
-import { Artifact, Deploykit, Provider } from "@deploykit/core"
+import { Effect, Layer, Schedule } from "effect"
+import { Artifact, Deploykit, Platform, Provider } from "@deploykit/core"
 
 const recorded: Array<Provider.DeployOptions | undefined> = []
 const bare: Provider.Provider = {
@@ -50,4 +50,46 @@ it.effect("operations a provider lacks fail with UnsupportedError", () =>
     assert.strictEqual(error.capability, "activation")
     assert.isFalse(deploykit.capabilities.deferredActivation)
   }).pipe(Effect.provide(kit))
+)
+
+const polling = (statuses: ReadonlyArray<Provider.DeploymentStatus>) => {
+  let polls = 0
+  const deployment = (status: Provider.DeploymentStatus) =>
+    new Provider.Deployment({
+      id: Provider.deploymentId.make("d"),
+      name: Provider.deploymentName.make("d"),
+      appId: Provider.appId.make("app"),
+      status,
+      ...(status === "failed" ? { reason: "Build rejected" } : {})
+    })
+  const provider: Provider.Provider = {
+    ...bare,
+    deploy: () => Effect.succeed(deployment("pending")),
+    getDeployment: () =>
+      Effect.sync(() => deployment(statuses[Math.min(polls++, statuses.length - 1)]!))
+  }
+  return Deploykit.layer().pipe(
+    Layer.provide(Layer.succeed(Provider.DeploymentProvider, provider)),
+    Layer.provide(NodeFileSystem.layer)
+  )
+}
+const fast = {
+  wait: { schedule: Schedule.spaced("1 millis").pipe(Schedule.upTo({ duration: "1 second" })) }
+}
+
+it.live("deployAndWait polls until the deployment is live", () =>
+  Effect.gen(function* () {
+    const deploykit = yield* Deploykit.Deploykit
+    const live = yield* deploykit.deployAndWait("app", yield* Artifact.make([]), fast)
+    assert.strictEqual(live.status, "deployed")
+  }).pipe(Effect.provide(polling(["deploying", "deploying", "deployed"])))
+)
+
+it.live("deployAndWait turns a failed deployment into DeploymentFailedError", () =>
+  Effect.gen(function* () {
+    const deploykit = yield* Deploykit.Deploykit
+    const error = yield* Effect.flip(deploykit.deployAndWait("app", yield* Artifact.make([]), fast))
+    assert.instanceOf(error, Platform.DeploymentFailedError)
+    assert.strictEqual(error.reason, "Build rejected")
+  }).pipe(Effect.provide(polling(["deploying", "failed"])))
 )

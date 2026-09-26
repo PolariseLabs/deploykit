@@ -1,20 +1,18 @@
-import { Context, Effect, Exit, Layer, Option, Ref, Schedule, Schema } from "effect"
+import { Context, Effect, Exit, Layer, Option, Schema } from "effect"
 import {
   appId,
   DeploymentProvider,
-  isTerminal,
   UnsupportedError,
   type Access,
   type DeployOptions as ProviderDeployOptions,
   type App,
-  type DeploymentStatus,
   type Deployment
 } from "../provider/provider.ts"
 import { capabilitiesOf, type AccessMode, type Capabilities } from "../provider/capabilities.ts"
 import type { TransferError, ProviderError } from "../provider/errors.ts"
 import type { AppStoreError, DeploymentTimeoutError } from "./errors.ts"
-import { DeploymentTimeoutError as TimeoutError } from "./errors.ts"
 import { TenantAppStore } from "./appStore.ts"
+import { waitUntilReady, type WaitOptions } from "./wait.ts"
 import type { Artifact } from "../artifact/index.ts"
 
 export interface GetOrCreateOptions {
@@ -25,13 +23,6 @@ export interface DeleteAppOptions {
   /** The tenant whose mapping should be forgotten along with the app. */
   readonly externalId: string
   readonly appId: string
-}
-
-export interface WaitOptions {
-  /** How often to ask, and for how long. Must be bounded. */
-  readonly schedule?: Schedule.Schedule<unknown>
-
-  readonly tolerateFailures?: number
 }
 
 export interface DeployOptions extends ProviderDeployOptions {
@@ -84,8 +75,6 @@ class AppAlreadyRecordedError extends Schema.TaggedError<AppAlreadyRecordedError
 ) {}
 
 /** A minute of one-second polls: slow enough to be polite, bounded so it ends. */
-const defaultSchedule = Schedule.spaced("1 second").pipe(Schedule.upTo({ duration: "5 minutes" }))
-
 export class Platform extends Context.Service<Platform, PlatformApi>()("@deploykit/Platform") {}
 
 export const layer = Layer.effect(
@@ -181,53 +170,8 @@ export const layer = Layer.effect(
       deployments: {
         get: (appId: string, deploymentId: string) => provider.getDeployment(appId, deploymentId),
 
-        waitUntilReady: (appId: string, id: string, options: WaitOptions = {}) =>
-          Effect.gen(function* () {
-            const schedule = options.schedule ?? defaultSchedule
-            const tolerate = options.tolerateFailures ?? 3
-
-            /** Consecutive failures, reset by any answer at all. */
-            const misses = yield* Ref.make(0)
-            /** The last status actually observed, for a timeout worth reading. */
-            const seen = yield* Ref.make<DeploymentStatus | undefined>(undefined)
-
-            const tick = provider.getDeployment(appId, id).pipe(
-              Effect.tap(deployment =>
-                Ref.set(misses, 0).pipe(Effect.andThen(Ref.set(seen, deployment.status)))
-              ),
-              Effect.map(deployment => ({ _tag: "Answered" as const, deployment })),
-              Effect.catchTag("ProviderError", error =>
-                Ref.updateAndGet(misses, n => n + 1).pipe(
-                  Effect.map(consecutive => ({ _tag: "Missed" as const, error, consecutive }))
-                )
-              )
-            )
-
-            const last = yield* tick.pipe(
-              Effect.repeat({
-                until: outcome =>
-                  outcome._tag === "Answered"
-                    ? isTerminal(outcome.deployment.status)
-                    : outcome.consecutive >= tolerate,
-                schedule
-              })
-            )
-
-            if (last._tag === "Missed") {
-              // The provider's error, not a timeout: we stopped because it kept
-              // failing, and that error is what the caller needs to see.
-              return yield* last.error
-            }
-            if (isTerminal(last.deployment.status)) {
-              return last.deployment
-            }
-            return yield* new TimeoutError({
-              deploymentId: id,
-              lastStatus: yield* Ref.get(seen).pipe(
-                Effect.map(status => status ?? last.deployment.status)
-              )
-            })
-          })
+        waitUntilReady: (appId: string, id: string, options?: WaitOptions) =>
+          waitUntilReady(provider, appId, id, options)
       }
     }
   })
