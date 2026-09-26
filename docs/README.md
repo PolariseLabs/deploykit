@@ -15,10 +15,6 @@ omit it; the build then uses relative URLs and reports a warning.
 Fumapress selects the Vercel adapter when building on Vercel. For another host,
 use its supported adapter in `vite.config.ts`; the default is a Node server.
 Only deploy the docs application, never the repository's fixture or env files.
-A retained qualification deployment is available at
-https://deploykit-qualification-docs-muif2x.vercel.app . Its assigned Vercel domain
-was read from the project API; do not derive that domain from the project name.
-A permanent custom domain and Git-connected hosting remain to be selected.
 
 ## Editing documentation
 

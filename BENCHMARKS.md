@@ -41,12 +41,10 @@ above describe only the buffered path. Local tests now exercise 9 MiB staged fil
 including retries and cancellation. They are correctness tests, not memory benchmarks.
 Archive optimization remains outside this implementation.
 
-## large-artifact offline fixture (2026-09-25)
+## Large-artifact offline fixture (2026-09-25)
 
-An external synthetic fixture
-preserves 2,191 anonymized paths and 884,799,521 synthetic bytes, including a
-69,531,590-byte largest file. Its original verification passed unchanged. The extended
-verifier runs 14 independently asserted cases, each in a fresh Node v25.2.1 process.
+An external synthetic fixture preserves 2,191 anonymized paths and 884,799,521
+synthetic bytes, including a 69,531,590-byte largest file. The extended verifier runs 14 independently asserted cases, each in a fresh Node v25.2.1 process.
 Two-publish cases run both instances in the same process. All provider HTTP is injected
 and offline; no application correctness or live-provider performance is implied.
 
@@ -68,7 +66,7 @@ sampled recursively every 5 ms; reservation peaks are exact. Shared budgets were
 The lower independent-mode RSS in this run is not a demonstrated memory benefit.
 All reservations and staged files were released. The full fixture cannot deploy to
 Pages unchanged because two assets exceed 25 MiB; actual-adapter preflight rejects
-it without reads or HTTP. Full results, commands and limitations are in the fixture.
+it without reads or HTTP. This historical fixture and its verifier are not included in this repository.
 
 ## Vercel scheduling and readiness investigation (2026-09-25)
 
@@ -294,6 +292,6 @@ Staging disk was not instrumented, and this is not a fresh-process memory compar
 An earlier attempt stopped before provider calls because its memory budget was too
 small. Another exposed READY-before-serving and stopped on a transient 404. Their
 receipts remain separate. The final harness uses the public serving probe, reconciles
-interrupted operations and never retries deployment creation blindly. Its results
-are in external benchmark receipts; entitlement responses
-and the initial failures are in the other `release-*.json` receipts.
+interrupted operations and never retries deployment creation blindly. Results,
+entitlement responses and initial failures are retained separately; the live-test
+harness and receipts are not included in this repository.

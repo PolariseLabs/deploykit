@@ -10,13 +10,13 @@ describe("layered", () => {
     Effect.gen(function* () {
       const result = Artifact.layered([
         { name: "template", entries: [yield* text("config.json", "from template")] },
-        { name: "generated", entries: [yield* text("config.json", "from generator")] }
+        { name: "generated", entries: [yield* text("config.json", "generated config")] }
       ])
 
       const entry = yield* Artifact.get(result.artifact, "config.json")
       assert.strictEqual(
         entry._tag === "Some" && entry.value._tag === "Text" ? entry.value.content : "",
-        "from generator"
+        "generated config"
       )
     })
   )

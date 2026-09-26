@@ -512,12 +512,7 @@ describe("adoption, the cases equality of names would hide", () => {
 })
 
 describe("polling through failures", () => {
-  /**
-   * A failed status check is not a failed deployment. The build carries on
-   * while the provider drops a request, and abandoning the wait turns their
-   * bad minute into our failure. This is the behaviour deploykit lacked and
-   * the consumer had.
-   */
+  // A failed status check should not immediately abandon a running deployment.
   it.effect("rides out a few failed polls and still reports the result", () =>
     Effect.gen(function* () {
       const platform = yield* Platform.Platform
