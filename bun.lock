@@ -31,20 +31,24 @@
       "dependencies": {
         "@deploykit/core": "workspace:*",
         "@noble/hashes": "^2.4.0",
-        "effect": "4.0.0-rc.112",
       },
       "devDependencies": {
         "@effect/platform-node": "4.0.0-rc.112",
+        "effect": "4.0.0-rc.112",
+      },
+      "peerDependencies": {
+        "effect": "4.0.0-rc.112",
       },
     },
     "packages/core": {
       "name": "@deploykit/core",
       "version": "0.1.0-alpha.1",
-      "dependencies": {
-        "effect": "4.0.0-rc.112",
-      },
       "devDependencies": {
         "@effect/platform-node": "4.0.0-rc.112",
+        "effect": "4.0.0-rc.112",
+      },
+      "peerDependencies": {
+        "effect": "4.0.0-rc.112",
       },
     },
     "packages/devtools": {
@@ -52,6 +56,12 @@
       "version": "0.1.0-alpha.1",
       "dependencies": {
         "@deploykit/core": "workspace:*",
+      },
+      "devDependencies": {
+        "@effect/platform-node": "4.0.0-rc.112",
+        "effect": "4.0.0-rc.112",
+      },
+      "peerDependencies": {
         "@effect/platform-node": "4.0.0-rc.112",
         "effect": "4.0.0-rc.112",
       },
@@ -73,6 +83,11 @@
       "version": "0.1.0-alpha.1",
       "dependencies": {
         "@deploykit/core": "workspace:*",
+      },
+      "devDependencies": {
+        "effect": "4.0.0-rc.112",
+      },
+      "peerDependencies": {
         "effect": "4.0.0-rc.112",
       },
     },
@@ -81,10 +96,13 @@
       "version": "0.1.0-alpha.1",
       "dependencies": {
         "@deploykit/core": "workspace:*",
-        "effect": "4.0.0-rc.112",
       },
       "devDependencies": {
         "@effect/platform-node": "4.0.0-rc.112",
+        "effect": "4.0.0-rc.112",
+      },
+      "peerDependencies": {
+        "effect": "4.0.0-rc.112",
       },
     },
   },

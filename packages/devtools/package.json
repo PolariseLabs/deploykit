@@ -21,9 +21,7 @@
     "build": "tsc --build"
   },
   "dependencies": {
-    "@deploykit/core": "workspace:*",
-    "effect": "4.0.0-rc.112",
-    "@effect/platform-node": "4.0.0-rc.112"
+    "@deploykit/core": "workspace:*"
   },
   "engines": {
     "node": ">=22.19.0"
@@ -31,5 +29,13 @@
   "publishConfig": {
     "access": "public",
     "tag": "alpha"
+  },
+  "peerDependencies": {
+    "effect": "4.0.0-rc.112",
+    "@effect/platform-node": "4.0.0-rc.112"
+  },
+  "devDependencies": {
+    "effect": "4.0.0-rc.112",
+    "@effect/platform-node": "4.0.0-rc.112"
   }
 }

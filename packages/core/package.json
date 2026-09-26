@@ -68,11 +68,9 @@
   "scripts": {
     "build": "tsc --build"
   },
-  "dependencies": {
-    "effect": "4.0.0-rc.112"
-  },
   "devDependencies": {
-    "@effect/platform-node": "4.0.0-rc.112"
+    "@effect/platform-node": "4.0.0-rc.112",
+    "effect": "4.0.0-rc.112"
   },
   "engines": {
     "node": ">=22.19.0"
@@ -80,5 +78,8 @@
   "publishConfig": {
     "access": "public",
     "tag": "alpha"
+  },
+  "peerDependencies": {
+    "effect": "4.0.0-rc.112"
   }
 }

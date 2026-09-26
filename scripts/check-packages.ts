@@ -11,7 +11,8 @@ const root = process.cwd()
 const PackageMetadata = Schema.Struct({
   version: Schema.String,
   publishConfig: Schema.Struct({ access: Schema.String, tag: Schema.String }),
-  dependencies: Schema.Record(Schema.String, Schema.String),
+  dependencies: Schema.optional(Schema.Record(Schema.String, Schema.String)),
+  peerDependencies: Schema.optional(Schema.Record(Schema.String, Schema.String)),
   exports: Schema.Record(Schema.String, Schema.Record(Schema.String, Schema.String))
 })
 const run = (command: string, args: ReadonlyArray<string>, cwd: string) =>
@@ -50,6 +51,11 @@ const program = Effect.acquireUseRelease(
         for (const value of Object.values(packed.dependencies ?? {})) {
           assert.ok(typeof value === "string" && !value.startsWith("workspace:"))
         }
+        // Effect apps must share one Effect instance with deploykit; only the
+        // Promise package, whose users never see Effect, bundles its own.
+        const effectIsPeer = packed.peerDependencies?.effect !== undefined
+        assert.equal(effectIsPeer, name !== "node", `${name}: effect dependency kind`)
+        assert.equal(packed.dependencies?.effect !== undefined, name === "node")
         for (const entry of Object.values(packed.exports ?? {})) {
           assert.ok(typeof entry === "object" && entry !== null)
           for (const target of Object.values(entry)) {

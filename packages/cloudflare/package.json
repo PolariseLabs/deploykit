@@ -26,17 +26,20 @@
   },
   "dependencies": {
     "@deploykit/core": "workspace:*",
-    "@noble/hashes": "^2.4.0",
-    "effect": "4.0.0-rc.112"
+    "@noble/hashes": "^2.4.0"
   },
   "engines": {
     "node": ">=22.19.0"
   },
   "devDependencies": {
-    "@effect/platform-node": "4.0.0-rc.112"
+    "@effect/platform-node": "4.0.0-rc.112",
+    "effect": "4.0.0-rc.112"
   },
   "publishConfig": {
     "access": "public",
     "tag": "alpha"
+  },
+  "peerDependencies": {
+    "effect": "4.0.0-rc.112"
   }
 }
