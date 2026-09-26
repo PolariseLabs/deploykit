@@ -1,0 +1,56 @@
+---
+title: Build a publishing workflow
+description: Keep coordination, deployment and application checks independently recoverable.
+---
+
+Deploykit is an operation boundary. Your application owns the workflow around it.
+The same design works in a queue worker, a long-running Node process, or Convex plus Fluid.
+
+## Store enough to resume
+
+| Field                       | Save it when                   | Why                                      |
+| --------------------------- | ------------------------------ | ---------------------------------------- |
+| Application publish ID      | Before any external write      | Identify one caller-owned attempt        |
+| Destination app/project ID  | When provisioning or adopting  | Avoid creating a project per retry       |
+| Artifact/manifest reference | After immutable composition    | Reopen the exact same bytes              |
+| Vercel operation ID         | Before creation                | Correlate ambiguous creation             |
+| Provider deployment receipt | Immediately after creation     | Observe and check without creating again |
+| Verification result         | After caller-owned checks      | Separate deployment from app correctness |
+| Activation state            | After observing provider state | Distinguish requested from active        |
+
+Use a database constraint or lease to prevent two workers claiming the same attempt.
+Deploykit does not provide durable locks, exactly-once scheduling or fleet-wide memory limits.
+
+## The control plane
+
+Use `@deploykit/vercel/control` or `@deploykit/cloudflare/control` for lightweight project,
+status, capability and supported activation operations. These entry points exclude the
+Node file-transfer path. Provide the full adapter in the process that reads artifact bytes.
+
+## Convex and Vercel Fluid
+
+1. A Convex mutation stores the attempt and immutable manifest reference.
+2. Your dispatch mechanism invokes an authenticated Fluid worker with that attempt ID.
+3. The worker verifies ownership, loads the manifest and creates one reusable deploykit client.
+4. It deploys and writes the receipt to Convex before readiness or application checks.
+5. Convex retains durable status while the worker emits telemetry and checkpoints results.
+6. A separate caller-owned decision activates the Vercel deployment after verification.
+
+This is an integration design, not a built-in Convex function or ready-made queue.
+Use your existing authentication and dispatch mechanism. The SDK never needs access to your
+Convex tables or application configuration. An HTTP/R2 reader is supplied by your worker.
+
+## Retry the failed step
+
+Persisted receipts let you retry readiness, application verification or activation observation
+without repeating creation. Route a lost creation response to [recovery](/docs/guides/recovery).
+If dispatch times out, that alone does not prove the worker stopped.
+
+## Share local resources deliberately
+
+A process should reuse a Promise client or ManagedRuntime across concurrent publishes.
+That shares upload pacing and memory/staging reservations. Two Fluid instances have separate
+budgets. Coordinate provider-wide quotas in the caller when running a fleet.
+
+[Stored artifacts](/docs/guides/stored-artifacts) contains the actual streaming reader.
+[Telemetry](/docs/core/telemetry) shows how to forward observations to your existing tools.

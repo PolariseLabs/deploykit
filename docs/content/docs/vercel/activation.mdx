@@ -1,0 +1,152 @@
+---
+title: Activation
+description: Stage a production deploy, check it, then go live.
+---
+
+import { Tab, Tabs } from "fumadocs-ui/components/tabs"
+
+By default a production deploy goes live as soon as it's ready. Deferred activation splits that in
+two, so you can check the new version before any visitor sees it.
+
+## Stage, check, go live
+
+<Tabs groupId="api" items={["Effect", "Promise"]} persist>
+<Tab value="Promise">
+
+```ts title="src/release.ts"
+import { waitUntilServing } from "@deploykit/node"
+import { deploykit } from "./deploykit"
+
+// 1. Stage: a production build that isn't serving traffic yet.
+const staged = await deploykit.deployDirectory(appId, "./my-app", {
+  target: "production",
+  activation: "deferred",
+  operationId: attemptId
+})
+
+// 2. Wait until it's ready, then check it at its own URL.
+const ready = await waitUntilReady(appId, staged.id) // see Deploying
+await waitUntilServing(ready.url!)
+await runSmokeTests(ready.url!)
+
+// 3. Go live.
+await deploykit.activateDeployment(appId, staged.id) // { state: "pending" }
+
+// 4. Confirm.
+const { state } = await deploykit.getActivation(appId, staged.id)
+// "active" once traffic has switched, "unknown" until then
+```
+
+</Tab>
+<Tab value="Effect">
+
+```ts title="src/release.ts"
+import { Effect, Schedule } from "effect"
+import { Deploykit, Platform, Provider } from "@deploykit/core"
+
+export const release = (appId: string, attemptId: string) =>
+  Effect.gen(function* () {
+    const deploykit = yield* Deploykit.Deploykit
+
+    // 1. Stage.
+    const staged = yield* deploykit.deployDirectory(appId, "./my-app", {
+      target: "production",
+      activation: "deferred",
+      operationId: attemptId
+    })
+
+    // 2. Wait and check.
+    const ready = yield* deploykit.getDeployment(appId, staged.id).pipe(
+      Effect.repeat({
+        until: d => Provider.isTerminal(d.status),
+        schedule: Schedule.spaced("1 second")
+      })
+    )
+    yield* Platform.waitUntilServing(ready.url!)
+    yield* runSmokeTests(ready.url!)
+
+    // 3. Go live, then 4. confirm.
+    yield* deploykit.activateDeployment(appId, staged.id)
+    return yield* deploykit.getActivation(appId, staged.id).pipe(
+      Effect.repeat({
+        until: a => a.state === "active",
+        schedule: Schedule.spaced("2 seconds").pipe(Schedule.upTo({ duration: "1 minute" }))
+      })
+    )
+  })
+```
+
+</Tab>
+</Tabs>
+
+## Rules
+
+- Only a **ready production** deployment of the same project can be activated. Anything else fails
+  with `UnsupportedError`. A preview can't be promoted; deploy again with `target: "production"`.
+- `activateDeployment` returning means Vercel accepted the request. Only `getActivation` returning
+  `active` confirms traffic moved.
+- Activation is never retried automatically. If it fails with an unknown outcome, check
+  `getActivation` before trying again.
+- deploykit doesn't stop two callers activating at once. If that can happen, decide in your own
+  code which one wins, for example with a lock per app.
+
+| `state`   | Returned by          | Means                                                    |
+| --------- | -------------------- | -------------------------------------------------------- |
+| `pending` | `activateDeployment` | Vercel accepted the request                              |
+| `active`  | `getActivation`      | This deployment is the project's production deployment   |
+| `unknown` | `getActivation`      | It isn't yet, or something else replaced it. Check again |
+
+## Rolling back
+
+Activate the previous deployment. It's still a ready production deployment of the project, so the
+same call applies:
+
+```ts
+await deploykit.activateDeployment(appId, previousDeploymentId)
+```
+
+## Recovering a lost response
+
+If the connection drops right after Vercel receives a deploy, you get a `ProviderError` with
+`recovery: "reconcile"`. The deployment may or may not exist. **Don't deploy again.** Look it up by
+the `operationId` you passed:
+
+<Tabs groupId="api" items={["Effect", "Promise"]} persist>
+<Tab value="Promise">
+
+```ts
+const result = await deploykit.reconcileDeployment(appId, attemptId)
+
+switch (result._tag) {
+  case "Recovered":
+    // Exactly one match. Carry on with result.deployment.
+    break
+  case "Unknown":
+    // No match, several matches, or the search was incomplete.
+    // result.candidates lists any deployment ids seen; result.reason says why.
+    break
+}
+```
+
+</Tab>
+<Tab value="Effect">
+
+```ts
+const recover = (appId: string, attemptId: string) =>
+  Effect.gen(function* () {
+    const deploykit = yield* Deploykit.Deploykit
+    const result = yield* deploykit.reconcileDeployment(appId, attemptId)
+    return result._tag === "Recovered" ? result.deployment : undefined
+  })
+```
+
+</Tab>
+</Tabs>
+
+`Recovered` only comes back when exactly one deployment matches in a complete search. Anything less
+certain is `Unknown`, and the next step is yours: wait and reconcile again, or alert someone.
+
+deploykit tags each deployment with your `operationId` in its metadata, and searches recent
+deployments for it. Save the `operationId` before calling `deploy`, and the deployment id as soon
+as you get it. The operation id helps you find a deployment; it doesn't guarantee only one is
+created.

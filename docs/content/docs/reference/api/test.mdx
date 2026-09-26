@@ -1,0 +1,160 @@
+---
+title: "@deploykit/test"
+description: "Complete generated public declarations for @deploykit/test."
+---
+
+This reference is generated from the built package. Start with the [guides](/docs) for working examples and the [API overview](/docs/reference) for task-oriented reference.
+
+## Import paths
+
+Only the import paths below are public. Supporting declaration modules describe the types reachable through those exports; their filenames are not additional public import paths.
+
+| Import            | Declaration module |
+| ----------------- | ------------------ |
+| `@deploykit/test` | `index.d.ts`       |
+
+## index.d.ts
+
+```ts
+export * from "./testProvider.js"
+export * as MemoryAppStore from "./memoryAppStore.js"
+```
+
+## testProvider.d.ts
+
+```ts
+import { Context, Effect, Layer, Option } from "effect"
+import type { Artifact } from "@deploykit/core"
+import { Deploykit, Provider } from "@deploykit/core"
+/** Which calls fail, so error paths are testable without breaking anything real. */
+export interface TestProviderConfig {
+  readonly lostCreateResponse?: ReadonlyArray<string>
+  readonly failOn?: {
+    /** App names whose createApp fails, as a provider would on a name clash. */
+    readonly createApp?: ReadonlyArray<string>
+    /** App ids whose getApp fails. */
+    readonly getApp?: ReadonlyArray<string>
+    /** App ids whose deleteApp fails. */
+    readonly deleteApp?: ReadonlyArray<string>
+    /** App ids whose deploy fails before any deployment is recorded. */
+    readonly deploy?: ReadonlyArray<string>
+    /** App ids whose deploy is accepted but whose build ends in "failed". */
+    readonly build?: ReadonlyArray<string>
+  }
+  readonly neverFinish?: ReadonlyArray<string>
+  readonly withoutAdoptByName?: boolean
+  /** Omit setAccess, modelling a provider with no access model at all. */
+  readonly withoutAccessControl?: boolean
+  readonly failFirstPolls?: number
+  readonly failPollsAt?: ReadonlyArray<number>
+}
+/** What the provider kept about one deployment, including the files it was handed. */
+export interface DeploymentRecord {
+  readonly operationId?: string
+  readonly deployment: Provider.Deployment
+  readonly target: "production" | "preview"
+  readonly artifact: Artifact.Artifact
+  readonly buildFails: boolean
+  readonly stuck: boolean
+}
+/** Everything the provider has seen. Read it with `snapshot` to assert on it. */
+export interface TestState {
+  readonly apps: ReadonlyMap<string, Provider.App>
+  readonly deployments: ReadonlyMap<string, DeploymentRecord>
+  readonly nextAppId: number
+  readonly nextDeploymentId: number
+}
+/** The in-memory provider plus the inspection handles tests need. */
+export interface TestProviderApi {
+  /** The contract implementation, to hand to code under test. */
+  readonly provider: Provider.Provider
+  /** Everything recorded so far. */
+  readonly snapshot: Effect.Effect<TestState>
+  /** What access was last set for an app, for assertions. */
+  readonly accessFor: (id: string) => Effect.Effect<Option.Option<Provider.Access>>
+  /** The exact artifact a deployment was created from. */
+  readonly artifactFor: (
+    deploymentId: string
+  ) => Effect.Effect<Artifact.Artifact, Provider.ProviderError>
+}
+export declare const make: (config?: TestProviderConfig) => Effect.Effect<TestProviderApi>
+declare const TestProvider_base: Context.ServiceClass<
+  TestProvider,
+  "@deploykit/TestProvider",
+  TestProviderApi
+>
+/** The inspection handle, for tests that assert on what the provider recorded. */
+export declare class TestProvider extends TestProvider_base {}
+export declare const layer: (
+  config?: TestProviderConfig
+) => Layer.Layer<TestProvider | Provider.DeploymentProvider, never, never>
+/**
+ * `Deploykit` over the in-memory provider, for testing code that deploys.
+ * Also provides `TestProvider`, to assert on what was deployed. Needs a `FileSystem`.
+ */
+export declare const deploykitLayer: (
+  config?: TestProviderConfig & Deploykit.Limits
+) => Layer.Layer<
+  TestProvider | Provider.DeploymentProvider | Deploykit.Deploykit,
+  Provider.TransferLimitError,
+  import("effect/FileSystem").FileSystem
+>
+export {}
+```
+
+## memoryAppStore.d.ts
+
+```ts
+/**
+ * An in-memory AppStore for tests.
+ *
+ * Real consumers back this with their own database; this one is a Map, so a
+ * test can drive the tenant-to-app mapping without one. Failures are opt-in,
+ * the same shape as TestProviderConfig, because the interesting paths in
+ * Platform are the ones where the store misbehaves.
+ */
+import { Context, Effect, Layer } from "effect"
+import { Provider } from "@deploykit/core"
+import { Platform } from "@deploykit/core"
+export interface MemoryAppStoreConfig {
+  readonly failOn?: {
+    /** External ids whose get fails. */
+    readonly get?: ReadonlyArray<string>
+    /** External ids whose put fails, which is what triggers compensation. */
+    readonly put?: ReadonlyArray<string>
+    /**
+     * External ids whose put fails only the FIRST time. Models a store that was
+     * briefly down: the failure leaks an orphan, and the retry can then record
+     * the adoption.
+     */
+    readonly putOnce?: ReadonlyArray<string>
+  }
+  /**
+   * External ids that already have an app recorded, but whose FIRST get returns
+   * None. That is precisely a lost race: our read happened before the other
+   * caller's write, so our own write is the thing that discovers the conflict.
+   * Deterministic, unlike actually racing two fibers.
+   */
+  readonly raceLostFor?: Readonly<Record<string, string>>
+}
+export interface MemoryAppStoreApi {
+  readonly store: Platform.AppStore
+  /** The mapping as it stands, for assertions. */
+  readonly snapshot: Effect.Effect<ReadonlyMap<string, Provider.AppId>>
+}
+export declare const makeAppStore: (
+  config?: MemoryAppStoreConfig
+) => Effect.Effect<MemoryAppStoreApi>
+declare const MemoryAppStore_base: Context.ServiceClass<
+  MemoryAppStore,
+  "@deploykit/MemoryAppStore",
+  MemoryAppStoreApi
+>
+/** The inspection handle, for tests that assert on what was recorded. */
+export declare class MemoryAppStore extends MemoryAppStore_base {}
+/** Provides TenantAppStore for code under test, and MemoryAppStore for assertions. */
+export declare const layer: (
+  config?: MemoryAppStoreConfig
+) => Layer.Layer<MemoryAppStore | Platform.TenantAppStore, never, never>
+export {}
+```

@@ -1,0 +1,148 @@
+---
+title: Setup
+description: Connect deploykit to Vercel.
+---
+
+import { Step, Steps } from "fumadocs-ui/components/steps"
+import { Tab, Tabs } from "fumadocs-ui/components/tabs"
+
+<Steps>
+<Step>
+
+### Install
+
+Follow the [installation guide](/docs/installation) to install the alpha packages,
+then configure the provider below.
+
+</Step>
+<Step>
+
+### Add credentials
+
+Create a token at [vercel.com/account/tokens](https://vercel.com/account/tokens), scoped to the team
+that will own the projects.
+
+```bash title=".env"
+VERCEL_TOKEN=...
+# Only if the token isn't already scoped to your team:
+VERCEL_TEAM_ID=team_...
+```
+
+`VERCEL_API_KEY` is also accepted in place of `VERCEL_TOKEN`.
+
+</Step>
+<Step>
+
+### Create the client
+
+<Tabs groupId="api" items={["Effect", "Promise"]} persist>
+<Tab value="Promise">
+
+```ts title="src/deploykit.ts"
+import { createClient } from "@deploykit/node/vercel"
+
+export const deploykit = createClient({
+  token: process.env.VERCEL_TOKEN!,
+  ...(process.env.VERCEL_TEAM_ID ? { teamId: process.env.VERCEL_TEAM_ID } : {})
+})
+```
+
+</Tab>
+<Tab value="Effect">
+
+```ts title="src/deploykit.ts"
+import { Layer } from "effect"
+import { NodeFileSystem } from "@effect/platform-node"
+import * as Vercel from "@deploykit/vercel"
+
+// Reads VERCEL_TOKEN and VERCEL_TEAM_ID from the environment.
+export const DeploykitLive = Vercel.layerConfig().pipe(Layer.provide(NodeFileSystem.layer))
+```
+
+To pass options, use `layer` instead:
+
+```ts
+export const DeploykitLive = Vercel.layer({
+  token,
+  teamId,
+  uploadThrottle: "balanced",
+  memoryBudgetBytes: 512 * 1024 * 1024
+}).pipe(Layer.provide(NodeFileSystem.layer))
+```
+
+</Tab>
+</Tabs>
+
+</Step>
+</Steps>
+
+## Client options
+
+| Option                                                    | Default                                         | What it does                                                                    |
+| --------------------------------------------------------- | ----------------------------------------------- | ------------------------------------------------------------------------------- |
+| `token`                                                   | required                                        | Vercel API token                                                                |
+| `teamId`                                                  | none                                            | Team to act for                                                                 |
+| `uploadThrottle`                                          | none                                            | Upload rate limit shared by every deploy. See [Uploads](/docs/vercel/uploads)   |
+| `retry`                                                   | `{ attempts: 4 }`                               | Retries for reads and uploads. See [Errors](/docs/core/errors#built-in-retries) |
+| `timeoutMs`                                               | `30000`                                         | Time limit per HTTP operation, including retries                                |
+| `fetch`                                                   | global `fetch`                                  | Custom HTTP transport                                                           |
+| `memoryBudgetBytes`, `stagingBudgetBytes`, `maxFileBytes` | see [Limits](/docs/core/limits#memory-and-disk) | Shared memory and disk caps                                                     |
+| `onEvent`                                                 | none                                            | Telemetry callback (Promise API). See [Telemetry](/docs/core/telemetry)         |
+
+## What to deploy
+
+A [Build Output API](https://vercel.com/docs/build-output-api) tree. Paths in the artifact start
+with `.vercel/output/`:
+
+```
+.vercel/output/config.json                  routes, headers, redirects
+.vercel/output/static/index.html            static files
+.vercel/output/functions/api/hello.func/    serverless functions
+```
+
+Vercel won't build anything for you. Run your framework's build first: Next.js, Astro, SvelteKit,
+Nuxt and others can all output this format, often via `vercel build`. Then deploy the result:
+
+```ts
+await deploykit.deployDirectory(appId, "./my-app") // the folder that contains .vercel/output
+```
+
+Generated files go under `.vercel/output/static/`. Either write them into the folder before
+deploying, or add them in memory with [`Artifact.add`](/docs/core/artifacts#a-template-plus-generated-files)
+at a path like `.vercel/output/static/config.json`.
+
+<Callout type="warn">
+  Only put deployment content in the directory. Everything in it is uploaded, including dotfiles and
+  anything like a `.env` file.
+</Callout>
+
+## Deploy options
+
+On top of the [core options](/docs/core/deploying#options):
+
+| Option              | Default       | What it does                                                                                                                                          |
+| ------------------- | ------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `activation`        | `"automatic"` | `"deferred"` stages a production deploy without sending traffic to it. See [Activation](/docs/vercel/activation)                                      |
+| `operationId`       | none          | Your id for this attempt, to [recover a lost response](/docs/vercel/activation#recovering-a-lost-response). Letters, digits, `_`, `.`, `-`; up to 128 |
+| `meta`              | none          | Key-value strings attached to the deployment                                                                                                          |
+| `uploadConcurrency` | `8`           | Files uploaded at once, 1 to 32. See [Uploads](/docs/vercel/uploads)                                                                                  |
+| `uploadOrder`       | `"manifest"`  | `"largest-first"` starts big files first                                                                                                              |
+| `uploadRounds`      | `3`           | Times to re-upload files Vercel still reports missing, 0 to 10                                                                                        |
+
+`activation: "deferred"` with `target: "preview"` is rejected: only production deploys can be staged.
+
+## Separate coordinator and worker
+
+If one service manages projects and another uploads files, the coordinator only needs the control
+plane. `@deploykit/vercel/control` has no upload code and can be bundled for the browser or an edge
+runtime:
+
+```ts title="coordinator.ts"
+import { makeVercelClient, makeVercelControl } from "@deploykit/vercel/control"
+
+const control = makeVercelControl(makeVercelClient({ token }))
+
+// control.createApp, getDeployment, activateDeployment, ... all return Effects
+```
+
+It has every method except `deploy`. Keep `@deploykit/vercel` (or `@deploykit/node`) in the worker.

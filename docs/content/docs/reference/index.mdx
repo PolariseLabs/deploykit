@@ -1,0 +1,34 @@
+---
+title: API reference
+description: Find the public entry point, method, option or exact type you need.
+---
+
+Start with the readable references, then use the generated declarations for exact signatures.
+Every published `exports` entry is included in the package reference below. Supporting declarations
+are grouped by module; a symbol in a supporting module is not automatically a public import path.
+
+| Reference                                          | What it covers                                      |
+| -------------------------------------------------- | --------------------------------------------------- |
+| [Promise client](/docs/reference/client)           | Client methods, lifecycle and call options          |
+| [Effect service](/docs/reference/deploykit)        | Layers, requirements, success and error channels    |
+| [File and manifest helpers](/docs/reference/files) | Input variants, stream contracts and validation     |
+| [Provider options](/docs/reference/providers)      | Credentials, defaults, throttling and capabilities  |
+| [Result types](/docs/reference/types)              | Deployment, activation, progress and reconciliation |
+
+## Exact declarations by package
+
+These pages are generated from the same `.d.ts` files installed by consumers. The docs check
+fails when source declarations or embedded example files change without updating their pages.
+
+| Package                 | Exact reference                                                   |
+| ----------------------- | ----------------------------------------------------------------- |
+| `@deploykit/core`       | [Core and all core subpaths](/docs/reference/api/core)            |
+| `@deploykit/node`       | [Promise helpers and both clients](/docs/reference/api/node)      |
+| `@deploykit/vercel`     | [Vercel adapter and control plane](/docs/reference/api/vercel)    |
+| `@deploykit/cloudflare` | [Pages adapter and control plane](/docs/reference/api/cloudflare) |
+| `@deploykit/devtools`   | [Dashboard and event collector](/docs/reference/api/devtools)     |
+| `@deploykit/test`       | [Test provider and in-memory app store](/docs/reference/api/test) |
+
+Type signatures describe required services and errors. Guides explain when to call them,
+what to persist, and how to recover. Nothing in the generated reference grants capabilities
+a provider or account plan does not support.

@@ -1,0 +1,34 @@
+---
+title: Devtools
+description: A local dashboard for watching deploys.
+---
+
+`@deploykit/devtools` serves a page on localhost showing each deploy's events and timings live.
+
+Install `@deploykit/devtools@alpha` alongside its dependencies using the [installation guide](/docs/installation).
+
+```ts title="scripts/publish-local.ts"
+import { Effect } from "effect"
+import * as Devtools from "@deploykit/devtools"
+
+const program = Effect.scoped(
+  Effect.gen(function* () {
+    const devtools = yield* Devtools.make()
+    console.log("Open", devtools.url)
+
+    const result = yield* devtools.track(publish, { label: "Publish preview" })
+    yield* devtools.flush
+    return result
+  })
+)
+```
+
+- The server runs while the scope is open, and stops when it closes.
+- It keeps the last 20 runs and the latest 500 events of each.
+- `Devtools.make({ onEvent })` also forwards every event, for example to your logs.
+- `Devtools.makeCollector()` gives the same `track` without the web server.
+
+`track` only watches. It doesn't poll, retry or activate anything, so wrap your whole publish flow
+if you want those steps to show up.
+
+To try it with simulated deploys, run `bun run devtools` in the deploykit repo.

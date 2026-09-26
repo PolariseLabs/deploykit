@@ -1,0 +1,87 @@
+---
+title: Recover a failed publish
+description: Distinguish a rejected request, a lost response and a deployment that already exists.
+---
+
+Save a unique application-owned publish attempt before sending deployment creation. For Vercel,
+pass its stable ID as `operationId` and save the returned deployment receipt immediately.
+An operation ID correlates recovery. It is not an idempotency key or an exactly-once guarantee.
+
+## Choose the next action from the failure
+
+| Evidence                                                      | What to do                                                    |
+| ------------------------------------------------------------- | ------------------------------------------------------------- |
+| Validation, source or integrity failure                       | Repair the input before publishing it again                   |
+| Read/poll failure with a saved deployment ID                  | Retry observation of that existing ID                         |
+| Deployment build failed                                       | Inspect its reason and provider logs; keep the failed receipt |
+| Create response lost, timeout or cancellation during creation | Reconcile the original operation ID                           |
+| Application verification failed                               | Retry or fix your checker against the saved deployment        |
+| Activation response lost                                      | Observe activation state; do not recreate the deployment      |
+
+Transport retries are bounded. Reads and content-addressed uploads can retry; create and
+activation writes are not automatically repeated. A caller should never wrap the whole
+publish workflow in an unconditional retry.
+
+## Reconcile with Vercel
+
+{/* example: examples/docs/recovery.ts */}
+
+```ts
+import { ProviderError } from "@deploykit/node"
+import { createClient } from "@deploykit/node/vercel"
+import type { VercelOptions } from "@deploykit/node/vercel"
+
+export async function recoverPublish(
+  config: VercelOptions,
+  input: { appId: string; operationId: string; signal: AbortSignal }
+) {
+  const client = createClient(config)
+  try {
+    const outcome = await client.reconcileDeployment(input.appId, input.operationId, {
+      signal: input.signal
+    })
+    switch (outcome._tag) {
+      case "Recovered":
+        return { state: "created" as const, deployment: outcome.deployment }
+      case "Unknown":
+        return {
+          state: "needs-review" as const,
+          reason: outcome.reason,
+          candidates: outcome.candidates
+        }
+      default: {
+        const exhaustive: never = outcome
+        return exhaustive
+      }
+    }
+  } catch (error) {
+    if (error instanceof ProviderError) {
+      console.error({ operation: error.operation, code: error.code, outcome: error.outcome })
+    }
+    throw error
+  } finally {
+    await client.close()
+  }
+}
+```
+
+For `Recovered`, persist the receipt and continue observing that deployment.
+For `Unknown`, preserve the attempt for review. An empty candidates array does **not** prove
+that creation never happened. Search windows, timing and provider metadata can prevent a unique result.
+
+Cloudflare Pages does not implement this reconciliation capability. Inspect the provider
+before deciding whether to start a new production publish.
+
+## Keep errors useful
+
+`ProviderError` can include `operation`, `statusCode`, `code`, `requestId`, `retryAfterMs`,
+`outcome` and `recovery`. Fields are optional; inspect what is present instead of assuming
+all network failures have an HTTP status.
+
+Use `Provider.encodeFailure` / `decodeFailure` from `@deploykit/core/provider` in Effect code
+to carry supported failures across JSON boundaries. SDK defects, filesystem errors and
+application errors are not all members of that wire union. Do not serialize credentials,
+signed URLs or arbitrary raw provider response bodies.
+
+[Errors](/docs/core/errors) explains the full taxonomy; [API declarations](/docs/reference/api/core)
+show the exact schemas.

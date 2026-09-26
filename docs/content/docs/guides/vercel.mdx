@@ -1,0 +1,165 @@
+---
+title: Vercel quickstart
+description: Deploy a tiny site, save its receipt, and verify it without switching production.
+---
+
+This guide uses the Promise API. For the same lifecycle with `Effect.gen`, see
+[Effect integration](/docs/guides/effect). Complete [installation](/docs/installation) first.
+
+## 1. Prepare a small artifact
+
+Create this tree. `site` is the directory you will pass to deploykit:
+
+```text
+site/
+  .vercel/
+    output/
+      config.json
+      static/
+        index.html
+```
+
+```json title="site/.vercel/output/config.json"
+{ "version": 3 }
+```
+
+```html title="site/.vercel/output/static/index.html"
+<h1>Hello from deploykit</h1>
+```
+
+Do not pass `site/.vercel/output/static`: that loses the Build Output configuration.
+For a framework application, run its build first and supply the equivalent prepared tree.
+Deploykit does not run a build command.
+
+## 2. Choose an isolated project
+
+Use an existing test project's ID. To create a project once, run this separately and save the ID:
+
+```ts title="create-project.ts"
+import { createClient } from "@deploykit/node/vercel"
+
+const token = process.env.VERCEL_TOKEN
+if (!token) throw new Error("Set VERCEL_TOKEN")
+const teamId = process.env.VERCEL_TEAM_ID
+const client = createClient({ token, ...(teamId ? { teamId } : {}) })
+try {
+  const app = await client.createApp("my-deploykit-test")
+  console.log(app.id)
+} finally {
+  await client.close()
+}
+```
+
+Run `node --env-file=.env create-project.ts`. Do not put project creation inside every publish.
+If creation has an unknown outcome, inspect or adopt the existing project before trying again.
+
+## 3. Add the publish function
+
+Save this as `publish.ts`. It returns a verified deployment receipt and leaves production unchanged.
+`recordCreated` is where your application persists the provider ID before any waiting or checks.
+
+{/* example: examples/docs/vercel.ts */}
+
+```ts
+import { waitUntilServing } from "@deploykit/node"
+import type { Deployment } from "@deploykit/node"
+import { createClient } from "@deploykit/node/vercel"
+import type { VercelOptions } from "@deploykit/node/vercel"
+
+export async function publishVercel(
+  config: VercelOptions,
+  input: {
+    appId: string
+    directory: string
+    operationId: string
+    recordCreated: (deployment: Deployment) => Promise<void>
+    verify: (url: string, signal: AbortSignal) => Promise<void>
+    signal?: AbortSignal
+  }
+) {
+  const deadline = AbortSignal.timeout(5 * 60_000)
+  const signal = input.signal ? AbortSignal.any([input.signal, deadline]) : deadline
+  const client = createClient(config)
+  try {
+    const created = await client.deployDirectory(input.appId, input.directory, {
+      target: "production",
+      activation: "deferred",
+      operationId: input.operationId,
+      signal
+    })
+    await input.recordCreated(created)
+    const ready = await client.waitUntilReady(input.appId, created.id, { signal })
+    if (ready.status !== "deployed" || ready.url === undefined) {
+      throw new Error(ready.reason ?? "Deployment did not become ready")
+    }
+    await waitUntilServing(ready.url, { signal, timeoutMs: 60_000 })
+    await input.verify(ready.url, signal)
+    return ready
+  } finally {
+    await client.close()
+  }
+}
+```
+
+## 4. Call it
+
+For this one-off script, a JSON file stands in for your database:
+
+```ts title="run.ts"
+import { writeFile } from "node:fs/promises"
+import { publishVercel } from "./publish.ts"
+
+const token = process.env.VERCEL_TOKEN
+const appId = process.env.VERCEL_PROJECT_ID
+if (!token || !appId) throw new Error("Set VERCEL_TOKEN and VERCEL_PROJECT_ID")
+const teamId = process.env.VERCEL_TEAM_ID
+const operationId = crypto.randomUUID()
+await writeFile("publish-intent.json", JSON.stringify({ appId, operationId }), {
+  flag: "wx"
+})
+
+const deployment = await publishVercel(
+  { token, ...(teamId ? { teamId } : {}), uploadThrottle: "balanced" },
+  {
+    appId,
+    operationId,
+    directory: "./site",
+    recordCreated: deployment => writeFile("deployment.json", JSON.stringify(deployment)),
+    verify: async (url, signal) => {
+      const response = await fetch(url, { signal })
+      if (!response.ok || !(await response.text()).includes("Hello from deploykit")) {
+        throw new Error("The deployed page did not contain the expected heading")
+      }
+    }
+  }
+)
+console.log(deployment.id, deployment.url)
+```
+
+Run `node --env-file=.env run.ts` from the directory containing `site/`.
+The intent file intentionally prevents rerunning this script blindly. Inspect its receipt
+or [reconcile](/docs/guides/recovery) before starting a different publish.
+
+## What success means
+
+You have a deployment ID, a terminal `deployed` status and a checked deployment URL.
+You have **not** switched the project's active production deployment. Use the separate
+[activation step](/docs/vercel/activation) when the caller chooses to go live.
+
+Protected projects may return a login redirect instead of the page. The serving probe
+rejects that by default; configure a caller-owned authenticated checker rather than treating
+any redirect as success. Project protection is not disabled by this example.
+
+## If it fails
+
+| Symptom                                | Next action                                                         |
+| -------------------------------------- | ------------------------------------------------------------------- |
+| Validation or integrity error          | Fix the artifact or source; don't repeat the same input             |
+| Upload timeout                         | Check source speed, file limits and the HTTP deadline               |
+| Unknown create outcome                 | Keep the operation ID and reconcile; don't call create again        |
+| Verification fails after receipt saved | Inspect the existing deployment; production is still unchanged      |
+| Process interrupted                    | Inspect `publish-intent.json` and `deployment.json` before resuming |
+
+Your `recordCreated` and `verify` implementations must also have their own bounded I/O.
+For long-running services, move client creation outside the per-publish function and close
+it only on shutdown. See [publishing workflow](/docs/guides/workflow).

@@ -1,0 +1,48 @@
+---
+title: Workers
+description: Run server code alongside your static files.
+---
+
+Add a `_worker.js` file at the root of the artifact. Pages runs it for every request, and it can
+hand any request on to your static files. This is Pages' "advanced mode".
+
+```js title="_worker.js"
+export default {
+  async fetch(request, env) {
+    const url = new URL(request.url)
+    if (url.pathname === "/api/hello") {
+      return Response.json({ hello: "world" })
+    }
+    // Everything else: serve the static files.
+    return env.ASSETS.fetch(request)
+  }
+}
+```
+
+Deploy it like any other file:
+
+```ts
+import { artifactFromFiles } from "@deploykit/node"
+
+const artifact = await artifactFromFiles([
+  { path: "index.html", file: "./dist/index.html" },
+  { path: "_worker.js", file: "./dist/_worker.js" }
+])
+await deploykit.deploy(appId, artifact)
+```
+
+Or keep it in your build folder and use `deployDirectory`.
+
+## Requirements
+
+- **One ES module file, already bundled.** deploykit uploads it as it is; it doesn't bundle it or
+  resolve its imports.
+- **Up to 8 MiB.** It's held in memory while uploading, unlike other files.
+- **`functions/` isn't compiled.** If you use a `functions/` directory, bundle it into `_worker.js`
+  first with `wrangler pages functions build` or esbuild.
+
+## Bundling with esbuild
+
+```bash
+esbuild src/worker.ts --bundle --format=esm --outfile=dist/_worker.js
+```

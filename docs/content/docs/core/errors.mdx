@@ -1,0 +1,131 @@
+---
+title: Errors
+description: What can fail, which method can fail with what, and what to do about it.
+---
+
+import { Tab, Tabs } from "fumadocs-ui/components/tabs"
+
+Every error has a `_tag`. The Promise API throws them; with Effect they're typed in the error
+channel.
+
+| Error                    | Means                                                       | Do                                                      |
+| ------------------------ | ----------------------------------------------------------- | ------------------------------------------------------- |
+| `ProviderError`          | The host rejected the request, or its outcome is unknown    | Check `recovery`, [below](#providererror)               |
+| `ValidationError`        | Invalid input: a bad option, manifest or file               | Fix the input                                           |
+| `UnsupportedError`       | This provider can't do that                                 | Check [capabilities](/docs/core/deploying#capabilities) |
+| `SourceError`            | Reading a file from its source failed                       | Check the source; safe to retry                         |
+| `IntegrityError`         | A file's bytes didn't match its declared size or hash       | Rebuild the manifest                                    |
+| `TransferLimitError`     | A file or the artifact is over a [limit](/docs/core/limits) | Shrink it or raise a budget                             |
+| `DeploymentTimeoutError` | Polling ended before a terminal status                      | Continue observing the saved deployment                 |
+| `DeploymentFailedError`  | `deployAndWait` observed a failed deployment                | Inspect the provider failure and saved intent           |
+| `AbortError`             | Cancelled by your `AbortSignal` (Promise API)               | Inspect possible create outcome                         |
+| `ClientClosedError`      | Called after `close()` (Promise API)                        | Use an open client                                      |
+
+## Which method fails with what
+
+| Method                                                                                                                                        | Can fail with                                                                                                 |
+| --------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| `createApp`, `getApp`, `deleteApp`, `getDeployment`                                                                                           | `ProviderError`                                                                                               |
+| `findAppByName`, `setAccess`, `activateDeployment`, `getActivation`, `reconcileDeployment`, `listDeployments`, `deleteDeployment`, `rollback` | `ProviderError`, `UnsupportedError`                                                                           |
+| `deploy`                                                                                                                                      | `ProviderError`, `UnsupportedError`, `ValidationError`, `SourceError`, `IntegrityError`, `TransferLimitError` |
+| `deployDirectory`                                                                                                                             | As `deploy`, plus file system errors reading the directory and `InvalidArtifactPathError`                     |
+| `deployManifest`                                                                                                                              | As `deploy`; an invalid manifest is a `ValidationError`                                                       |
+
+The Promise client can also throw `AbortError` and `ClientClosedError` from every method.
+
+## ProviderError
+
+`recovery` tells you what to do next.
+
+<Tabs groupId="api" items={["Effect", "Promise"]} persist>
+<Tab value="Promise">
+
+```ts
+import { ProviderError } from "@deploykit/node"
+
+try {
+  await deploykit.deploy(appId, artifact)
+} catch (error) {
+  if (!(error instanceof ProviderError)) throw error
+
+  switch (error.recovery) {
+    case "retry":
+      // Temporary. Safe to try again later.
+      break
+    case "reconcile":
+      // Might have worked. Don't deploy again; check first.
+      break
+    case "fix-input":
+      // The request was wrong. Retrying won't help.
+      break
+  }
+}
+```
+
+</Tab>
+<Tab value="Effect">
+
+```ts
+import { Effect } from "effect"
+import { Deploykit } from "@deploykit/core"
+
+const publish = Effect.gen(function* () {
+  const deploykit = yield* Deploykit.Deploykit
+  return yield* deploykit.deploy(appId, artifact)
+}).pipe(
+  Effect.catchTag("ProviderError", error =>
+    error.recovery === "retry" ? retryLater(error) : Effect.fail(error)
+  )
+)
+```
+
+</Tab>
+</Tabs>
+
+| Field                   | Meaning                                                                                               |
+| ----------------------- | ----------------------------------------------------------------------------------------------------- |
+| `recovery`              | `retry`, `reconcile` or `fix-input`. May be absent when deploykit can't tell                          |
+| `outcome`               | `rejected` (nothing happened), `unknown` (it may have happened), `observation-failed` (a read failed) |
+| `operation`             | Which call failed, e.g. `createDeployment`                                                            |
+| `provider`              | Which provider raised it                                                                              |
+| `statusCode`, `code`    | HTTP status and the host's error code                                                                 |
+| `requestId`             | The host's request id, for support tickets                                                            |
+| `retryAfterMs`          | How long the host asked you to wait                                                                   |
+| `appId`, `deploymentId` | What it was working on, when known                                                                    |
+
+## Unknown outcomes
+
+If the connection drops after the host received a create request, deploykit can't know whether a
+deployment exists. You get `outcome: "unknown"`, `recovery: "reconcile"`.
+
+**Don't just deploy again**, or you may end up with two. On Vercel,
+[reconcile it](/docs/vercel/activation#recovering-a-lost-response). On Cloudflare Pages, check the
+project's deployments before retrying.
+
+## Built-in retries
+
+| Request                                | Retried?                                                                    |
+| -------------------------------------- | --------------------------------------------------------------------------- |
+| Reads (`getApp`, `getDeployment`, ...) | Up to 4 attempts, exponential backoff from 250 ms, respecting `Retry-After` |
+| File uploads                           | Same. Uploads are addressed by content, so repeating one is harmless        |
+| Creating a deployment                  | **Never**, not even after a 429, because repeating it could duplicate it    |
+| Activating a deployment                | **Never**                                                                   |
+
+Change it with `retry` on the client: `{ attempts: 1 }` turns retries off, and `baseDelay` sets the
+first backoff. Each HTTP operation, retries included, times out after 30 seconds; change it with
+`timeoutMs`.
+
+## Sending errors between processes
+
+`Provider.encodeFailure(error)` turns an error into versioned JSON and `Provider.decodeFailure(json)`
+turns it back with its tag and fields. Useful when a worker reports to a coordinator.
+
+```ts
+import { Provider } from "@deploykit/core"
+
+const json = Provider.encodeFailure(error) // Effect<string>, in the worker
+const same = Provider.decodeFailure(text) // Effect<Failure>, in the coordinator
+```
+
+Provider response diagnostics are allowlisted, but source errors and filesystem errors can include paths.
+For external telemetry, use deploykit's sanitized events rather than logging arbitrary error objects.

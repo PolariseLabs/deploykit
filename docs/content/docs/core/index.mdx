@@ -1,0 +1,100 @@
+---
+title: Overview
+description: The provider-independent part of deploykit, and what to import.
+---
+
+import { Tab, Tabs } from "fumadocs-ui/components/tabs"
+
+`@deploykit/core` holds everything that works the same on every host: artifacts, manifests,
+errors, and the contract every provider implements. It never imports a provider SDK.
+
+You rarely use core on its own. You pair it with a provider:
+
+<Tabs groupId="api" items={["Effect", "Promise"]} persist>
+<Tab value="Promise">
+
+`@deploykit/node` bundles core and both providers behind a Promise client.
+
+```ts
+import { createClient } from "@deploykit/node/vercel" // or /cloudflare
+
+const deploykit = createClient({ token })
+await deploykit.deployDirectory(appId, "./build")
+```
+
+</Tab>
+<Tab value="Effect">
+
+Each provider package gives you a layer for the `Deploykit` service, which lives in core.
+
+```ts
+import { Effect } from "effect"
+import { Deploykit } from "@deploykit/core"
+import * as Vercel from "@deploykit/vercel" // or @deploykit/cloudflare
+
+const program = Effect.gen(function* () {
+  const deploykit = yield* Deploykit.Deploykit
+  return yield* deploykit.deployDirectory(appId, "./build")
+})
+
+program.pipe(Effect.provide(Vercel.layerConfig()))
+```
+
+</Tab>
+</Tabs>
+
+Both have the same methods. See the [Promise client](/docs/reference/client) and
+[Deploykit service](/docs/reference/deploykit) references.
+
+## What every provider supports
+
+Code that sticks to these runs on any host.
+
+| Method                                            | Does                                          |
+| ------------------------------------------------- | --------------------------------------------- |
+| `createApp(name)`                                 | Create a project for one site                 |
+| `getApp(appId)`                                   | Look up a project                             |
+| `deleteApp(appId)`                                | Delete a project                              |
+| `deploy(appId, artifact, options?)`               | Upload files and create a deployment          |
+| `deployDirectory(appId, dir, options?)`           | Same, straight from a directory               |
+| `deployManifest(appId, manifest, read, options?)` | Same, from a [manifest](/docs/core/manifests) |
+| `getDeployment(appId, deploymentId)`              | Read a deployment's status and URL            |
+
+The rest are optional: `findAppByName`, `setAccess`, `activateDeployment`, `getActivation` and
+`reconcileDeployment`. On a provider without them they fail with `UnsupportedError`. Check
+[capabilities](/docs/core/deploying#capabilities) first.
+
+## Imports
+
+<Tabs groupId="api" items={["Effect", "Promise"]} persist>
+<Tab value="Promise">
+
+| Import                       | What you get                                                                                                                                                    |
+| ---------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `@deploykit/node/vercel`     | `createClient`, `VercelOptions`                                                                                                                                 |
+| `@deploykit/node/cloudflare` | `createClient`, `CloudflareOptions`                                                                                                                             |
+| `@deploykit/node`            | `artifactFromDirectory`, `artifactFromFiles`, `artifactFromManifest`, `manifestFromDirectory`, `manifestFromArtifact`, `waitUntilServing`, error classes, types |
+
+</Tab>
+<Tab value="Effect">
+
+| Import                             | What you get                                                                               |
+| ---------------------------------- | ------------------------------------------------------------------------------------------ |
+| `@deploykit/core`                  | `Deploykit`, `Artifact`, `Entry`, `Manifest`, `Source`, `Provider`, `Platform`             |
+| `@deploykit/vercel`                | `layer`, `layerConfig`, lower-level `vercelLayer`, `layerWith`, `makeVercelClient`         |
+| `@deploykit/cloudflare`            | `layer`, `layerConfig`, lower-level `cloudflareLayer`, `layerWith`, `makeCloudflareClient` |
+| `@deploykit/core/manifest-builder` | `fromDirectory`, `fromArtifact` to build manifests                                         |
+| `@deploykit/core/telemetry`        | `Observer`, `observe`, `Event`                                                             |
+
+</Tab>
+</Tabs>
+
+## Which layer do I use? (Effect)
+
+| Layer                                      | Provides                      | Use it for                                                                              |
+| ------------------------------------------ | ----------------------------- | --------------------------------------------------------------------------------------- |
+| `Vercel.layerConfig()` / `layer(opts)`     | `Deploykit`                   | Almost everything                                                                       |
+| `Vercel.vercelLayer` / `layerWith(client)` | `Provider.DeploymentProvider` | The [Platform service](/docs/core/apps#the-platform-service), tests, writing an adapter |
+
+`Deploykit` wraps the raw provider, adds shared memory and disk budgets, and turns missing optional
+operations into `UnsupportedError`.

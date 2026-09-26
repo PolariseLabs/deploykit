@@ -1,0 +1,122 @@
+---
+title: Uploads
+description: Tune upload speed and stay within Vercel's rate limits.
+---
+
+import { Tab, Tabs } from "fumadocs-ui/components/tabs"
+
+The defaults suit most deploys. Tune them when you deploy many sites at once, have very large
+files, or hit rate limits.
+
+## How uploads work on Vercel
+
+1. deploykit hashes every file with SHA-1, Vercel's content address.
+2. It creates the deployment with the list of hashes. Vercel replies with the ones it's missing.
+3. It uploads those, then tries again. This repeats up to `uploadRounds` times (default 3).
+
+Files Vercel has seen before, in any of your deployments, aren't uploaded again. Redeploying a site
+with one changed file uploads one file.
+
+## Per deploy
+
+<Tabs groupId="api" items={["Effect", "Promise"]} persist>
+<Tab value="Promise">
+
+```ts
+await deploykit.deploy(appId, artifact, {
+  uploadConcurrency: 16,
+  uploadOrder: "largest-first"
+})
+```
+
+</Tab>
+<Tab value="Effect">
+
+These are Vercel-only, so they aren't in the portable `DeployOptions` type. Declare them with
+`DeployRequestOptions` first; an inline object literal is rejected by TypeScript's excess property
+check.
+
+```ts
+import type { DeployRequestOptions } from "@deploykit/vercel"
+
+const options: DeployRequestOptions = {
+  uploadConcurrency: 16,
+  uploadOrder: "largest-first"
+}
+
+const publish = Effect.gen(function* () {
+  const deploykit = yield* Deploykit.Deploykit
+  return yield* deploykit.deploy(appId, artifact, options)
+})
+```
+
+</Tab>
+</Tabs>
+
+| Option              | Default      | Effect                                                              |
+| ------------------- | ------------ | ------------------------------------------------------------------- |
+| `uploadConcurrency` | `8`          | Files uploaded at once, 1 to 32                                     |
+| `uploadOrder`       | `"manifest"` | `"largest-first"` starts big files early, so they don't finish last |
+| `uploadRounds`      | `3`          | Missing-file rounds, 0 to 10                                        |
+
+More concurrency can help with many small files, but uses more memory and hits rate limits sooner.
+Measure on your own host.
+
+## Across deploys
+
+`uploadThrottle` on the client paces uploads across **every** deploy using that client:
+
+<Tabs groupId="api" items={["Effect", "Promise"]} persist>
+<Tab value="Promise">
+
+```ts title="src/deploykit.ts"
+import { createClient } from "@deploykit/node/vercel"
+
+export const deploykit = createClient({
+  token: process.env.VERCEL_TOKEN!,
+  uploadThrottle: "balanced"
+  // or: { concurrency: 6, intervalMs: 150 }
+})
+```
+
+</Tab>
+<Tab value="Effect">
+
+```ts title="src/deploykit.ts"
+import * as Vercel from "@deploykit/vercel"
+
+export const DeploykitLive = Vercel.layer({
+  token,
+  uploadThrottle: "balanced"
+})
+```
+
+</Tab>
+</Tabs>
+
+| Preset         | Uploads at once | Gap between starts |
+| -------------- | --------------- | ------------------ |
+| `conservative` | 4               | 250 ms             |
+| `balanced`     | 8               | 100 ms             |
+| `fast`         | 16              | none               |
+
+A custom value takes `concurrency` (1 to 32) and `intervalMs` (0 to 60,000). The presets are
+exported as `uploadThrottlePresets`.
+
+With a throttle set, a 429 from Vercel pauses new uploads on that client until `Retry-After` has
+passed (or `x-ratelimit-reset`, or one second). Uploads already running finish normally. Without a
+throttle, new uploads aren't paced. Safe request retries still honor `Retry-After` or
+`X-RateLimit-Reset` on HTTP 429, including reads and uploads without a preset.
+The request deadline bounds retry waits; short 429 waits can exceed the ordinary attempt budget.
+Creation and activation are never
+automatically retried. A throttle is not a guarantee against provider rate limits.
+
+## Things to know
+
+- Throttles are per client. Separate processes don't share them, so coordinate account-wide limits
+  yourself.
+- `fast` doesn't raise `uploadConcurrency`, which still caps each deploy at 8 unless you change it.
+- Waiting for the throttle counts towards `timeoutMs`. At high concurrency, raise it: in testing, a
+  69.5 MB file took up to 42 seconds at concurrency 16, over the 30 second default.
+- In the same tests, concurrency 16 cut total upload time by about 7.5%. Gains are modest; don't
+  expect linear speed-ups.

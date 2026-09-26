@@ -1,0 +1,224 @@
+---
+title: Deploying
+description: Options, progress, readiness and capabilities.
+---
+
+import { Tab, Tabs } from "fumadocs-ui/components/tabs"
+
+<Tabs groupId="api" items={["Effect", "Promise"]} persist>
+<Tab value="Promise">
+
+```ts
+import { deploykit } from "./deploykit"
+
+const deployment = await deploykit.deploy(appId, artifact, options)
+// or straight from a directory:
+const deployment = await deploykit.deployDirectory(appId, "./build", options)
+```
+
+</Tab>
+<Tab value="Effect">
+
+```ts
+import { Effect } from "effect"
+import { Deploykit } from "@deploykit/core"
+
+const publish = Effect.gen(function* () {
+  const deploykit = yield* Deploykit.Deploykit
+  return yield* deploykit.deploy(appId, artifact, options)
+  // or straight from a directory:
+  // return yield* deploykit.deployDirectory(appId, "./build", options)
+})
+```
+
+</Tab>
+</Tabs>
+
+`deploy` returns once the host has **created** the deployment and given it an id. The build
+usually carries on after that, so [wait for it](#waiting-until-its-ready).
+
+## What happens during a deploy
+
+1. **Validate.** Paths, sizes and options are checked. Unsupported options fail here, before any
+   network call.
+2. **Hash.** Each file is hashed the way the host expects.
+3. **Negotiate.** deploykit asks the host which files it already has, and skips those.
+4. **Upload.** Missing files are uploaded in parallel, within the memory and disk
+   [budgets](/docs/core/limits#memory-and-disk).
+5. **Create.** The host creates the deployment. This is the one step that's never retried.
+
+## Options
+
+These work on every provider.
+
+| Option       | Type                          | What it does                                                              |
+| ------------ | ----------------------------- | ------------------------------------------------------------------------- |
+| `target`     | `"production"` \| `"preview"` | Where to deploy. Defaults to production.                                  |
+| `onProgress` | `(event) => void`             | Progress updates. See [below](#progress).                                 |
+| `signal`     | `AbortSignal`                 | Cancel the call. Promise API only; see [Lifecycle](/docs/core/lifecycle). |
+
+Provider-specific options are on the [Vercel](/docs/vercel#deploy-options) and
+[Cloudflare](/docs/cloudflare#deploy-options) pages. A provider that doesn't support an option
+rejects it **before** uploading anything, rather than ignoring it.
+
+## Progress
+
+<Tabs groupId="api" items={["Effect", "Promise"]} persist>
+<Tab value="Promise">
+
+```ts
+await deploykit.deploy(appId, artifact, {
+  onProgress: event => {
+    switch (event._tag) {
+      case "Hashing":
+        return console.log(`hashing ${event.done}/${event.total}`)
+      case "Uploading":
+        return console.log(`uploading ${event.done}/${event.total}, ${event.bytes} bytes`)
+      case "Throttled":
+        return console.log(`rate limited, waiting ${event.retryAfterMs ?? "?"}ms`)
+      case "Created":
+        return console.log(`created ${event.deploymentId}`)
+    }
+  }
+})
+```
+
+</Tab>
+<Tab value="Effect">
+
+The callback returns an Effect.
+
+```ts
+const publish = Effect.gen(function* () {
+  const deploykit = yield* Deploykit.Deploykit
+  return yield* deploykit.deploy(appId, artifact, {
+    onProgress: event => Effect.logInfo("deploy progress", event)
+  })
+})
+```
+
+</Tab>
+</Tabs>
+
+| Event       | Fields                   | Sent                             |
+| ----------- | ------------------------ | -------------------------------- |
+| `Hashing`   | `done`, `total`          | While hashing files              |
+| `Uploading` | `done`, `total`, `bytes` | As the host confirms uploads     |
+| `Throttled` | `retryAfterMs?`          | When the host rate-limits        |
+| `Created`   | `deploymentId`           | Once, when the deployment exists |
+
+`bytes` counts only bytes the host confirmed, excluding files it already had and repeated
+attempts. The callback must be quick: each call is cut off after 100 ms, and its errors are
+ignored. Progress isn't a receipt. Save the `Deployment` that `deploy` returns.
+
+## Waiting until it's ready
+
+A deployment goes `pending` → `deploying` → `deployed` or `failed`. Poll `getDeployment`
+until the status is final.
+
+<Tabs groupId="api" items={["Effect", "Promise"]} persist>
+<Tab value="Promise">
+
+```ts
+let current = deployment
+while (current.status === "pending" || current.status === "deploying") {
+  await new Promise(resolve => setTimeout(resolve, 1000))
+  current = await deploykit.getDeployment(appId, deployment.id)
+}
+```
+
+</Tab>
+<Tab value="Effect">
+
+```ts
+import { Effect, Schedule } from "effect"
+import { Deploykit, Provider } from "@deploykit/core"
+
+const waitUntilReady = (appId: string, deploymentId: string) =>
+  Effect.gen(function* () {
+    const deploykit = yield* Deploykit.Deploykit
+    return yield* deploykit.getDeployment(appId, deploymentId).pipe(
+      Effect.repeat({
+        until: d => Provider.isTerminal(d.status),
+        schedule: Schedule.spaced("1 second")
+      }),
+      Effect.timeout("5 minutes")
+    )
+  })
+```
+
+</Tab>
+</Tabs>
+
+A `failed` deployment may have a `reason` from the host.
+
+## Checking it serves
+
+`deployed` means the host finished, not that the URL answers yet. `waitUntilServing` polls the
+URL until it returns a 2xx, for up to 60 seconds.
+
+<Tabs groupId="api" items={["Effect", "Promise"]} persist>
+<Tab value="Promise">
+
+```ts
+import { waitUntilServing } from "@deploykit/node"
+
+const status = await waitUntilServing(current.url!, { timeoutMs: 60_000 })
+```
+
+</Tab>
+<Tab value="Effect">
+
+```ts
+import { Platform } from "@deploykit/core"
+
+const check = Platform.waitUntilServing(ready.url!, { timeoutMs: 60_000 })
+```
+
+</Tab>
+</Tabs>
+
+| Option      | Default        | What it does                                   |
+| ----------- | -------------- | ---------------------------------------------- |
+| `timeoutMs` | `60000`        | Overall deadline, including every request      |
+| `accept`    | 2xx            | `(status) => boolean` for success              |
+| `fetch`     | global `fetch` | Custom transport; must honour the abort signal |
+
+It resolves with the status it accepted, or fails with `NotServingError` (with the last `status`
+seen and `waitedMs`). It doesn't follow redirects, so a login page never counts as success. After
+this, run your own checks: only you know what "working" means for your app.
+
+## Capabilities
+
+Providers differ. Check before offering a feature:
+
+<Tabs groupId="api" items={["Effect", "Promise"]} persist>
+<Tab value="Promise">
+
+```ts
+const caps = await deploykit.getCapabilities()
+```
+
+</Tab>
+<Tab value="Effect">
+
+```ts
+const caps = Effect.map(Deploykit.Deploykit, deploykit => deploykit.capabilities)
+```
+
+</Tab>
+</Tabs>
+
+| Field                | `true` means                                                                          | Vercel | Pages                                                        |
+| -------------------- | ------------------------------------------------------------------------------------- | ------ | ------------------------------------------------------------ |
+| `deferredActivation` | You can [stage now and go live later](/docs/vercel/activation)                        | Yes    | No                                                           |
+| `reconciliation`     | You can [recover a lost response](/docs/vercel/activation#recovering-a-lost-response) | Yes    | No                                                           |
+| `previewDeployments` | `target: "preview"` works                                                             | Yes    | With [`previewBranch`](/docs/cloudflare#preview-deployments) |
+| `adoptByName`        | `findAppByName` works                                                                 | Yes    | Yes                                                          |
+| `accessModes`        | Which [access settings](/docs/vercel/access) work                                     | All    | None                                                         |
+
+`listDeployments`, `deleteDeployment` and `rollback` also have capability flags.
+The current HTTP adapters implement them; a custom provider can omit them. See
+[deployment management](/docs/reference/client#managing-existing-deployments).
+
+Calling something unsupported fails with `UnsupportedError`.

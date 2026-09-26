@@ -105,6 +105,8 @@ const program = Effect.acquireUseRelease(
         console.log(`${runtime}: ${result.stdout.trim()}`)
         const promise = yield* run(runtime, ["examples/promise-proof.ts"], directory)
         console.log(`${runtime}: ${promise.stdout.trim()}`)
+        const docs = yield* run(runtime, ["examples/docs-proof.ts"], directory)
+        console.log(`${runtime}: ${docs.stdout.trim()}`)
         const devtools = yield* run(runtime, ["examples/devtools-proof.ts"], directory)
         console.log(`${runtime}: ${devtools.stdout.trim()}`)
       }

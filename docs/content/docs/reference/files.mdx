@@ -1,0 +1,89 @@
+---
+title: File and manifest helpers
+description: Exact inputs, return values and reading behavior for the common file APIs.
+---
+
+## Promise helpers
+
+Import these from `@deploykit/node`. Every return value below is wrapped in a Promise.
+Optional `RunOptions` is `{ signal?: AbortSignal }`.
+
+| Function                | Parameters                                                    | Returns    | Reading behavior                                    |
+| ----------------------- | ------------------------------------------------------------- | ---------- | --------------------------------------------------- |
+| `artifactFromDirectory` | `directory: string, options?: RunOptions`                     | `Artifact` | Walks and stats files; contents remain lazy         |
+| `artifactFromFiles`     | `ReadonlyArray<FileInput>, options?: RunOptions`              | `Artifact` | Validates paths and stats local file entries        |
+| `artifactFromManifest`  | `manifest: unknown, read: StreamReader, options?: RunOptions` | `Artifact` | Decodes object or JSON; attaches lazy sources       |
+| `manifestFromDirectory` | `directory: string, options: BuildOptions & RunOptions`       | `Manifest` | Streams every file to compute SHA-256               |
+| `manifestFromArtifact`  | `artifact: Artifact, options: BuildOptions & RunOptions`      | `Manifest` | Streams entries and verifies sizes/existing SHA-256 |
+| `waitUntilServing`      | `url: string, options?: ServingOptions`                       | `number`   | Polls HTTP; returns the accepted status             |
+
+### FileInput
+
+Choose exactly one content form:
+
+```ts
+export type FileInput =
+  | { readonly path: string; readonly text: string }
+  | { readonly path: string; readonly bytes: Uint8Array }
+  | { readonly path: string; readonly file: string }
+```
+
+`path` is the destination path. `file` is a local filesystem path. Text uses UTF-8.
+Generated text and byte arrays are resident memory. For large remote content, use a manifest
+reader rather than allocating a full byte array. Directory readers include dotfiles and do not
+freeze mutable files. Duplicate or unsafe destination paths fail before upload.
+
+### BuildOptions
+
+| Option        | Type                       | Default / behavior                                       |
+| ------------- | -------------------------- | -------------------------------------------------------- |
+| `source`      | `(path: string) => string` | Required; assigns an opaque replayable storage reference |
+| `concurrency` | `number`                   | `4`; integer from 1 through 32                           |
+| `timeoutMs`   | `number`                   | `30000` per file; positive safe integer                  |
+| `signal`      | `AbortSignal`              | Promise helpers only                                     |
+
+The builder does not upload, snapshot or choose storage. It computes SHA-256, not new
+provider fingerprints. Existing Source fingerprints are preserved after byte verification.
+See [stored artifacts](/docs/guides/stored-artifacts).
+
+### StreamReader
+
+```ts
+export type StreamReader = (
+  reference: string,
+  signal: AbortSignal
+) => Promise<ReadableStream<Uint8Array>>
+```
+
+Return a fresh stream for each invocation and forward the signal. Open/read failures become
+`SourceError`; bytes that do not match the declared size or hash become `IntegrityError`.
+A supplied reader can allocate outside deploykit's memory reservation budget.
+
+### ServingOptions
+
+| Option      | Default      | Meaning                                                  |
+| ----------- | ------------ | -------------------------------------------------------- |
+| `timeoutMs` | `60000`      | Overall deadline, including polling and response cleanup |
+| `accept`    | HTTP 2xx     | `(status: number) => boolean`                            |
+| `fetch`     | Global fetch | Injected transport; must honor its signal                |
+| `signal`    | Unset        | Promise helper cancellation                              |
+
+Requests do not follow redirects. A timeout or unmet status produces `NotServingError`.
+The Effect helper also accepts a custom `schedule`, bounded by the overall deadline.
+Serving availability is not an application correctness check.
+
+## Effect equivalents
+
+| Task                         | Public API                                                                       |
+| ---------------------------- | -------------------------------------------------------------------------------- |
+| Construct entries            | `Entry.text`, `Entry.bytes`, `Entry.file`, `Entry.deferred`                      |
+| Build or inspect an artifact | `Artifact.make`, `add`, `get`, `has`, `list`, `fileCount`, `sizeOf`, `totalSize` |
+| Layer files intentionally    | `Artifact.layered`                                                               |
+| Decode/encode wire manifests | `Manifest.decode`, `encode`, `fromJson`, `toArtifact`                            |
+| Build manifests              | `fromDirectory`, `fromArtifact` from `@deploykit/core/manifest-builder`          |
+| Adapt Promise sources        | `Source.fromPromise`, `Source.fromReadableStream`                                |
+| Check HTTP serving           | `Platform.waitUntilServing`                                                      |
+
+Use the [exact core declarations](/docs/reference/api/core) for overloads, layering options,
+filesystem requirements, errors and schema exports. `Source.fromPromise` is a bounded-buffer
+convenience; prefer `fromReadableStream` for large objects.

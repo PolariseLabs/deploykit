@@ -1,0 +1,82 @@
+---
+title: Telemetry
+description: See what a deploy is doing, without a vendor SDK.
+---
+
+import { Tab, Tabs } from "fumadocs-ui/components/tabs"
+
+deploykit emits structured events as it works. Send them to your logs or analytics, or view them
+locally with [devtools](/docs/tools/devtools).
+
+<Tabs groupId="api" items={["Effect", "Promise"]} persist>
+<Tab value="Promise">
+
+```ts title="src/deploykit.ts"
+import { createClient } from "@deploykit/node/vercel"
+
+export const deploykit = createClient({
+  token: process.env.VERCEL_TOKEN!,
+  onEvent: event => queue.push(event)
+})
+```
+
+</Tab>
+<Tab value="Effect">
+
+```ts
+import { Effect } from "effect"
+import * as Telemetry from "@deploykit/core/telemetry"
+
+const observed = publish.pipe(
+  Effect.provideService(Telemetry.Observer, event => Effect.sync(() => queue.push(event)))
+)
+```
+
+</Tab>
+</Tabs>
+
+<Callout type="warn">
+  Each event handler call is cut off after 10 ms, and a blocking one can't be interrupted. Push
+  events onto a queue and send them elsewhere. Don't make network calls in the handler.
+</Callout>
+
+## Events
+
+| `kind`                                     | Tells you                                                   |
+| ------------------------------------------ | ----------------------------------------------------------- |
+| `input`                                    | Number of files and total bytes                             |
+| `cache`                                    | How many files the host already had, and how much to upload |
+| `progress`                                 | Hashing and upload progress                                 |
+| `retry.scheduled`                          | A retry: attempt number and delay                           |
+| `operation.started` / `operation.finished` | Timed steps, nested by `parentId`, with the outcome         |
+| `deployment`                               | Deployment id, status and URL                               |
+
+Every event is a plain object. Operation events look like this:
+
+```json
+{
+  "kind": "operation.finished",
+  "id": "op-12",
+  "parentId": "op-3",
+  "provider": "vercel",
+  "operation": "uploadFile",
+  "durationMs": 412,
+  "outcome": "success",
+  "details": { "bytes": 18234 }
+}
+```
+
+A failed operation has `outcome: "failure"` and a `failure` with the error's `tag`, `statusCode`,
+`code`, `requestId`, `outcome` and `recovery`, never its message.
+
+Events never include file contents, credentials, file paths, stack traces or raw host responses.
+
+## Timing your own steps
+
+Wrap your own work so it appears alongside deploykit's steps. This also creates an Effect tracing span.
+
+```ts
+import * as Telemetry from "@deploykit/core/telemetry"
+
+const checked = Telemetry.observe("my-app", "checkHomepage", checkHomepage)
+```

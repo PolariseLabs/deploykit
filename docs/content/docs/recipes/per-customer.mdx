@@ -1,0 +1,65 @@
+---
+title: A site per customer
+description: Map tenants to projects and track publishes without hiding uncertain outcomes.
+---
+
+Give each customer a provider project, then reuse that project's ID for every publish.
+Use the [Vercel quickstart](/docs/guides/vercel) for the executable publishing function and
+[generated configuration](/docs/guides/generated-config) for customer-specific files.
+This recipe describes the application-owned persistence around those functions.
+
+## Keep two records
+
+| Record          | Useful fields                                                        | Purpose                                      |
+| --------------- | -------------------------------------------------------------------- | -------------------------------------------- |
+| Site            | tenant ID, provider, account ID, project ID                          | Resolve an authorized destination            |
+| Publish attempt | attempt ID, site ID, artifact ID, operation ID, deployment ID, state | Track one requested publish and its evidence |
+
+Store provider credentials separately. Resolve the tenant from your authenticated request;
+do not let the caller choose another tenant's project or artifact by supplying an arbitrary ID.
+
+Use a unique database constraint for the site-to-project mapping. A database transaction cannot
+atomically commit a provider project creation. Persist creation intent and inspect an uncertain
+creation before starting another. `findAppByName` can help locate a project, but verify its
+account and ownership before adopting it.
+
+`Platform.apps.getOrCreate` offers an [application-store boundary](/docs/core/apps#the-platform-service)
+for Effect applications. Your store supplies locking, persistence and uniqueness; the SDK
+does not make the remote mutation exactly once.
+
+## Publish with explicit checkpoints
+
+1. Resolve the existing project and immutable artifact for this tenant.
+2. Insert the publish intent before contacting the provider.
+3. Call `publishVercel` with the stored operation ID and artifact directory.
+4. Persist the returned provider ID in its `recordCreated` callback.
+5. Run your application checks in its `verify` callback.
+6. Mark the attempt verified, then [activate separately](/docs/vercel/activation) when appropriate.
+
+For a worker using artifact storage, replace the directory input with the
+[streaming manifest reader](/docs/guides/stored-artifacts). New configuration fields and application
+checks stay in your code; deploykit sees ordinary paths and bytes.
+
+Keep `created`, `verified` and `active` as distinct states. A responding deployment URL does not
+prove that production routes to it. Persist the activation intent too, and inspect an uncertain
+activation before repeating it.
+
+## Recover without duplicate publishing
+
+On restart, use the saved deployment ID whenever it exists. Resume polling or verification
+against that deployment instead of uploading again. If creation has no receipt, use
+[operation reconciliation](/docs/guides/recovery). An `Unknown` result stays unresolved even when
+its candidate list is empty.
+
+A failed database write after creation does not mean creation failed. Cancellation can also
+interrupt the response after the provider accepted it. Keep these attempts available for
+recovery rather than resetting them to a fresh publish automatically.
+
+## Concurrent requests for the same customer
+
+Choose your ordering policy in the application. For example, serialize activation per site
+and activate only if the verified attempt is still the site's desired version. Two publishes
+may both succeed while completing in the opposite order to their requests.
+
+Deploykit's shared budgets limit transfer resource use; they do not serialize your business
+workflow. See [coordinator and worker](/docs/recipes/queue-worker) for job delivery concerns.

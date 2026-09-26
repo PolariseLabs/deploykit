@@ -1,0 +1,910 @@
+---
+title: "@deploykit/node"
+description: "Complete generated public declarations for @deploykit/node."
+---
+
+This reference is generated from the built package. Start with the [guides](/docs) for working examples and the [API overview](/docs/reference) for task-oriented reference.
+
+## Import paths
+
+Only the import paths below are public. Supporting declaration modules describe the types reachable through those exports; their filenames are not additional public import paths.
+
+| Import                       | Declaration module |
+| ---------------------------- | ------------------ |
+| `@deploykit/node`            | `index.d.ts`       |
+| `@deploykit/node/vercel`     | `vercel.d.ts`      |
+| `@deploykit/node/cloudflare` | `cloudflare.d.ts`  |
+| `@deploykit/node/test`       | `test.d.ts`        |
+| `@deploykit/node/edge`       | `edge.d.ts`        |
+
+## index.d.ts
+
+```ts
+export * from "./files.js"
+export { AbortError, ClientClosedError } from "./runtime.js"
+export type { RunOptions } from "./runtime.js"
+export type { ClientOptions, DeployOptions, WaitOptions } from "./client.js"
+export {
+  ProviderError,
+  SourceError,
+  IntegrityError,
+  TransferLimitError,
+  UploadError,
+  ValidationError,
+  UnsupportedError,
+  recoveryOf
+} from "@deploykit/core/provider"
+export { DeploymentFailedError, DeploymentTimeoutError } from "@deploykit/core/platform"
+export { NotServingError } from "@deploykit/core/platform"
+export type {
+  PromiseRequestGate,
+  Recovery,
+  Deployment,
+  Access,
+  Activation,
+  Reconciliation,
+  DeployProgress
+} from "@deploykit/core/provider"
+export type { Event as TelemetryEvent } from "@deploykit/core/telemetry"
+```
+
+## files.d.ts
+
+```ts
+import { Artifact, Entry, Source, Platform } from "@deploykit/core"
+import * as Builder from "@deploykit/core/manifest-builder"
+import type { RunOptions } from "./runtime.js"
+export type FileInput =
+  | {
+      readonly path: string
+      readonly text: string
+    }
+  | {
+      readonly path: string
+      readonly bytes: Uint8Array
+    }
+  | {
+      readonly path: string
+      readonly file: string
+    }
+export type { StreamReader } from "@deploykit/core/source"
+export type { BuildOptions } from "@deploykit/core/manifest-builder"
+export type { Artifact } from "@deploykit/core/artifact"
+export type { Manifest } from "@deploykit/core/manifest"
+export declare const artifactFromDirectory: (
+  directory: string,
+  options?: RunOptions
+) => Promise<{
+  entries: Map<
+    string & import("effect/Brand").Brand<"ArtifactPath">,
+    import("@deploykit/core/entry").Entry
+  >
+}>
+export declare const artifactFromFiles: (
+  files: ReadonlyArray<FileInput>,
+  options?: RunOptions
+) => Promise<{
+  entries: Map<string & import("effect/Brand").Brand<"ArtifactPath">, Entry.Entry>
+}>
+export declare const artifactFromManifest: (
+  manifest: unknown,
+  read: Source.StreamReader,
+  options?: RunOptions
+) => Promise<{
+  entries: Map<
+    string & import("effect/Brand").Brand<"ArtifactPath">,
+    import("@deploykit/core/entry").Entry
+  >
+}>
+export declare const manifestFromArtifact: (
+  artifact: Artifact.Artifact,
+  options: Builder.BuildOptions & RunOptions
+) => Promise<{
+  version: 1
+  entries: {
+    fingerprints?: {
+      recipe: string
+      context: string
+      value: string
+    }[]
+    path: string & import("effect/Brand").Brand<"ArtifactPath">
+    byteLength: number
+    source: string
+    sha256: string
+  }[]
+}>
+export declare const manifestFromDirectory: (
+  directory: string,
+  options: Builder.BuildOptions & RunOptions
+) => Promise<{
+  version: 1
+  entries: {
+    fingerprints?: {
+      recipe: string
+      context: string
+      value: string
+    }[]
+    path: string & import("effect/Brand").Brand<"ArtifactPath">
+    byteLength: number
+    source: string
+    sha256: string
+  }[]
+}>
+export declare const waitUntilServing: (
+  url: string,
+  options?: Omit<Platform.ServingOptions, "schedule"> & RunOptions
+) => Promise<number>
+```
+
+## runtime.d.ts
+
+```ts
+import { Cause, Effect, Exit, Schema } from "effect"
+declare const AbortError_base: Schema.Class<
+  AbortError,
+  Schema.TaggedStruct<
+    "AbortError",
+    {
+      readonly message: Schema.String
+    }
+  >,
+  Cause.YieldableError
+>
+export declare class AbortError extends AbortError_base {}
+declare const ClientClosedError_base: Schema.Class<
+  ClientClosedError,
+  Schema.TaggedStruct<
+    "ClientClosedError",
+    {
+      readonly message: Schema.String
+    }
+  >,
+  Cause.YieldableError
+>
+export declare class ClientClosedError extends ClientClosedError_base {}
+export interface RunOptions {
+  readonly signal?: AbortSignal
+}
+/** Reject before starting a fiber, since it may run before observing an aborted signal. */
+export declare const rejectIfAborted: (
+  signal: AbortSignal | undefined
+) => Promise<never> | undefined
+/** Preserve expected errors instead of exposing Effect's FiberFailure wrapper. */
+export declare const unwrap: <A, E>(exit: Exit.Exit<A, E>) => A
+export declare const run: <A, E>(effect: Effect.Effect<A, E>, options?: RunOptions) => Promise<A>
+export declare const callback: <A>(
+  fn: (value: A) => void | Promise<void>,
+  value: A
+) => Effect.Effect<void, never, never>
+export {}
+```
+
+## client.d.ts
+
+```ts
+import type { Layer } from "effect"
+import type { Artifact, Provider } from "@deploykit/core"
+import { Deploykit, Source } from "@deploykit/core"
+import * as Telemetry from "@deploykit/core/telemetry"
+import type { RunOptions } from "./runtime.js"
+export interface GateOption {
+  /** Shares request rate with other processes using the same token, e.g. through Redis. */
+  readonly gate?: Provider.PromiseRequestGate
+}
+export interface ClientOptions extends Deploykit.Limits {
+  readonly onEvent?: (event: Telemetry.Event) => void | Promise<void>
+}
+export type DeployOptions<D extends object = object> = Omit<Deploykit.DeployOptions, "onProgress"> &
+  D &
+  RunOptions & {
+    readonly onProgress?: (progress: Provider.DeployProgress) => void | Promise<void>
+  }
+/** How long to poll for a terminal status. Defaults: every second, for up to five minutes. */
+export interface WaitOptions extends RunOptions {
+  readonly intervalMs?: number
+  readonly timeoutMs?: number
+  /** Consecutive provider errors to ride out before failing. Default 3. */
+  readonly tolerateFailures?: number
+}
+/** A Promise face over one `Deploykit` layer. Each method runs the matching Effect method. */
+export declare const makeClient: <D extends object = object>(
+  /** Fully provided, filesystem included: the runtime entry points choose it. */
+  layer: Layer.Layer<Deploykit.Deploykit, unknown>,
+  config: ClientOptions
+) => {
+  close: () => Promise<void>
+  [Symbol.asyncDispose]: () => Promise<void>
+  getCapabilities: (options?: RunOptions) => Promise<Provider.Capabilities>
+  createApp: (name: string, options?: RunOptions) => Promise<Provider.App>
+  getApp: (appId: string, options?: RunOptions) => Promise<Provider.App>
+  deleteApp: (appId: string, options?: RunOptions) => Promise<void>
+  findAppByName: (name: string, options?: RunOptions) => Promise<Provider.App | undefined>
+  setAccess: (appId: string, access: Provider.Access, options?: RunOptions) => Promise<void>
+  getDeployment: (
+    appId: string,
+    deploymentId: string,
+    options?: RunOptions
+  ) => Promise<Provider.Deployment>
+  activateDeployment: (
+    appId: string,
+    deploymentId: string,
+    options?: RunOptions
+  ) => Promise<{
+    readonly appId: string
+    readonly deploymentId: string
+    readonly state: "unknown" | "pending" | "active"
+  }>
+  getActivation: (
+    appId: string,
+    deploymentId: string,
+    options?: RunOptions
+  ) => Promise<{
+    readonly appId: string
+    readonly deploymentId: string
+    readonly state: "unknown" | "pending" | "active"
+  }>
+  reconcileDeployment: (
+    appId: string,
+    operationId: string,
+    options?: RunOptions
+  ) => Promise<Provider.Reconciliation>
+  /** One page of an app's deployments, newest first. */
+  listDeployments: (
+    appId: string,
+    options?: Provider.ListDeploymentsOptions & RunOptions
+  ) => Promise<readonly Provider.Deployment[]>
+  deleteDeployment: (appId: string, deploymentId: string, options?: RunOptions) => Promise<void>
+  /** Point production back at an earlier successful production deployment. */
+  rollback: (
+    appId: string,
+    deploymentId: string,
+    options?: RunOptions
+  ) => Promise<{
+    readonly appId: string
+    readonly deploymentId: string
+    readonly state: "unknown" | "pending" | "active"
+  }>
+  deploy: (
+    appId: string,
+    artifact: Artifact.Artifact,
+    options?: DeployOptions<D>
+  ) => Promise<Provider.Deployment>
+  waitUntilReady: (
+    appId: string,
+    deploymentId: string,
+    options?: WaitOptions
+  ) => Promise<Provider.Deployment>
+  /** Deploy, then wait for it to go live. Rejects with `DeploymentFailedError` if it fails. */
+  deployAndWait: (
+    appId: string,
+    artifact: Artifact.Artifact,
+    options?: DeployOptions<D> & {
+      readonly wait?: Omit<WaitOptions, "signal">
+    }
+  ) => Promise<Provider.Deployment>
+  deployDirectory: (
+    appId: string,
+    directory: string,
+    options?: DeployOptions<D>
+  ) => Promise<Provider.Deployment>
+  deployManifest: (
+    appId: string,
+    manifest: unknown,
+    read: Source.StreamReader,
+    options?: DeployOptions<D>
+  ) => Promise<Provider.Deployment>
+}
+```
+
+## vercel.d.ts
+
+```ts
+import type { VercelDeployExtras, VercelOptions } from "./layers.js"
+export type { VercelOptions } from "./layers.js"
+export declare const createClient: (options: VercelOptions) => {
+  close: () => Promise<void>
+  [Symbol.asyncDispose]: () => Promise<void>
+  getCapabilities: (
+    options?: import("./runtime.ts").RunOptions
+  ) => Promise<import("@deploykit/core/provider").Capabilities>
+  createApp: (
+    name: string,
+    options?: import("./runtime.ts").RunOptions
+  ) => Promise<import("@deploykit/core/provider").App>
+  getApp: (
+    appId: string,
+    options?: import("./runtime.ts").RunOptions
+  ) => Promise<import("@deploykit/core/provider").App>
+  deleteApp: (appId: string, options?: import("./runtime.ts").RunOptions) => Promise<void>
+  findAppByName: (
+    name: string,
+    options?: import("./runtime.ts").RunOptions
+  ) => Promise<import("@deploykit/core/provider").App | undefined>
+  setAccess: (
+    appId: string,
+    access: import("@deploykit/core/provider").Access,
+    options?: import("./runtime.ts").RunOptions
+  ) => Promise<void>
+  getDeployment: (
+    appId: string,
+    deploymentId: string,
+    options?: import("./runtime.ts").RunOptions
+  ) => Promise<import("@deploykit/core/provider").Deployment>
+  activateDeployment: (
+    appId: string,
+    deploymentId: string,
+    options?: import("./runtime.ts").RunOptions
+  ) => Promise<{
+    readonly appId: string
+    readonly deploymentId: string
+    readonly state: "unknown" | "pending" | "active"
+  }>
+  getActivation: (
+    appId: string,
+    deploymentId: string,
+    options?: import("./runtime.ts").RunOptions
+  ) => Promise<{
+    readonly appId: string
+    readonly deploymentId: string
+    readonly state: "unknown" | "pending" | "active"
+  }>
+  reconcileDeployment: (
+    appId: string,
+    operationId: string,
+    options?: import("./runtime.ts").RunOptions
+  ) => Promise<import("@deploykit/core/provider").Reconciliation>
+  listDeployments: (
+    appId: string,
+    options?: import("@deploykit/core/provider").ListDeploymentsOptions &
+      import("./runtime.ts").RunOptions
+  ) => Promise<readonly import("@deploykit/core/provider").Deployment[]>
+  deleteDeployment: (
+    appId: string,
+    deploymentId: string,
+    options?: import("./runtime.ts").RunOptions
+  ) => Promise<void>
+  rollback: (
+    appId: string,
+    deploymentId: string,
+    options?: import("./runtime.ts").RunOptions
+  ) => Promise<{
+    readonly appId: string
+    readonly deploymentId: string
+    readonly state: "unknown" | "pending" | "active"
+  }>
+  deploy: (
+    appId: string,
+    artifact: import("@deploykit/core/artifact").Artifact,
+    options?: import("./client.js").DeployOptions<VercelDeployExtras> | undefined
+  ) => Promise<import("@deploykit/core/provider").Deployment>
+  waitUntilReady: (
+    appId: string,
+    deploymentId: string,
+    options?: import("./client.js").WaitOptions
+  ) => Promise<import("@deploykit/core/provider").Deployment>
+  deployAndWait: (
+    appId: string,
+    artifact: import("@deploykit/core/artifact").Artifact,
+    options?:
+      | (Omit<import("@deploykit/core/deploykit").DeployOptions, "onProgress"> &
+          VercelDeployExtras &
+          import("./runtime.ts").RunOptions & {
+            readonly onProgress?: (
+              progress: import("@deploykit/core/provider").DeployProgress
+            ) => void | Promise<void>
+          } & {
+            readonly wait?: Omit<import("./client.js").WaitOptions, "signal">
+          })
+      | undefined
+  ) => Promise<import("@deploykit/core/provider").Deployment>
+  deployDirectory: (
+    appId: string,
+    directory: string,
+    options?: import("./client.js").DeployOptions<VercelDeployExtras> | undefined
+  ) => Promise<import("@deploykit/core/provider").Deployment>
+  deployManifest: (
+    appId: string,
+    manifest: unknown,
+    read: import("@deploykit/core/source").StreamReader,
+    options?: import("./client.js").DeployOptions<VercelDeployExtras> | undefined
+  ) => Promise<import("@deploykit/core/provider").Deployment>
+}
+```
+
+## layers.d.ts
+
+```ts
+/** Provider layers for the Promise clients. No runtime imports here: entry points add the filesystem. */
+import type { CloudflareHttpConfig } from "@deploykit/cloudflare"
+import type { DeployRequestOptions, UploadDefaults, VercelHttpConfig } from "@deploykit/vercel"
+import type { ClientOptions, GateOption } from "./client.js"
+/** Upload tuning set here applies to every deploy; per-deploy options override it. */
+export type VercelOptions = Omit<VercelHttpConfig, "gate"> &
+  GateOption &
+  ClientOptions &
+  UploadDefaults
+export type VercelDeployExtras = Pick<
+  DeployRequestOptions,
+  "uploadRounds" | "uploadConcurrency" | "uploadOrder"
+>
+export type CloudflareOptions = Omit<CloudflareHttpConfig, "gate"> & GateOption & ClientOptions
+export declare const vercelLayer: (
+  options: VercelOptions
+) => import("effect/Layer").Layer<
+  import("@deploykit/core/deploykit").Deploykit,
+  import("@deploykit/core/provider").TransferLimitError,
+  import("effect/FileSystem").FileSystem
+>
+export declare const cloudflareLayer: (
+  options: CloudflareOptions
+) => import("effect/Layer").Layer<
+  import("@deploykit/core/deploykit").Deploykit,
+  import("@deploykit/core/provider").TransferLimitError,
+  import("effect/FileSystem").FileSystem
+>
+```
+
+## cloudflare.d.ts
+
+```ts
+import type { CloudflareOptions } from "./layers.js"
+export type { CloudflareOptions } from "./layers.js"
+export declare const createClient: (options: CloudflareOptions) => {
+  close: () => Promise<void>
+  [Symbol.asyncDispose]: () => Promise<void>
+  getCapabilities: (
+    options?: import("./runtime.ts").RunOptions
+  ) => Promise<import("@deploykit/core/provider").Capabilities>
+  createApp: (
+    name: string,
+    options?: import("./runtime.ts").RunOptions
+  ) => Promise<import("@deploykit/core/provider").App>
+  getApp: (
+    appId: string,
+    options?: import("./runtime.ts").RunOptions
+  ) => Promise<import("@deploykit/core/provider").App>
+  deleteApp: (appId: string, options?: import("./runtime.ts").RunOptions) => Promise<void>
+  findAppByName: (
+    name: string,
+    options?: import("./runtime.ts").RunOptions
+  ) => Promise<import("@deploykit/core/provider").App | undefined>
+  setAccess: (
+    appId: string,
+    access: import("@deploykit/core/provider").Access,
+    options?: import("./runtime.ts").RunOptions
+  ) => Promise<void>
+  getDeployment: (
+    appId: string,
+    deploymentId: string,
+    options?: import("./runtime.ts").RunOptions
+  ) => Promise<import("@deploykit/core/provider").Deployment>
+  activateDeployment: (
+    appId: string,
+    deploymentId: string,
+    options?: import("./runtime.ts").RunOptions
+  ) => Promise<{
+    readonly appId: string
+    readonly deploymentId: string
+    readonly state: "unknown" | "pending" | "active"
+  }>
+  getActivation: (
+    appId: string,
+    deploymentId: string,
+    options?: import("./runtime.ts").RunOptions
+  ) => Promise<{
+    readonly appId: string
+    readonly deploymentId: string
+    readonly state: "unknown" | "pending" | "active"
+  }>
+  reconcileDeployment: (
+    appId: string,
+    operationId: string,
+    options?: import("./runtime.ts").RunOptions
+  ) => Promise<import("@deploykit/core/provider").Reconciliation>
+  listDeployments: (
+    appId: string,
+    options?: import("@deploykit/core/provider").ListDeploymentsOptions &
+      import("./runtime.ts").RunOptions
+  ) => Promise<readonly import("@deploykit/core/provider").Deployment[]>
+  deleteDeployment: (
+    appId: string,
+    deploymentId: string,
+    options?: import("./runtime.ts").RunOptions
+  ) => Promise<void>
+  rollback: (
+    appId: string,
+    deploymentId: string,
+    options?: import("./runtime.ts").RunOptions
+  ) => Promise<{
+    readonly appId: string
+    readonly deploymentId: string
+    readonly state: "unknown" | "pending" | "active"
+  }>
+  deploy: (
+    appId: string,
+    artifact: import("@deploykit/core/artifact").Artifact,
+    options?: import("./client.js").DeployOptions<object> | undefined
+  ) => Promise<import("@deploykit/core/provider").Deployment>
+  waitUntilReady: (
+    appId: string,
+    deploymentId: string,
+    options?: import("./client.js").WaitOptions
+  ) => Promise<import("@deploykit/core/provider").Deployment>
+  deployAndWait: (
+    appId: string,
+    artifact: import("@deploykit/core/artifact").Artifact,
+    options?:
+      | (Omit<import("@deploykit/core/deploykit").DeployOptions, "onProgress"> &
+          object &
+          import("./runtime.ts").RunOptions & {
+            readonly onProgress?: (
+              progress: import("@deploykit/core/provider").DeployProgress
+            ) => void | Promise<void>
+          } & {
+            readonly wait?: Omit<import("./client.js").WaitOptions, "signal">
+          })
+      | undefined
+  ) => Promise<import("@deploykit/core/provider").Deployment>
+  deployDirectory: (
+    appId: string,
+    directory: string,
+    options?: import("./client.js").DeployOptions<object> | undefined
+  ) => Promise<import("@deploykit/core/provider").Deployment>
+  deployManifest: (
+    appId: string,
+    manifest: unknown,
+    read: import("@deploykit/core/source").StreamReader,
+    options?: import("./client.js").DeployOptions<object> | undefined
+  ) => Promise<import("@deploykit/core/provider").Deployment>
+}
+```
+
+## test.d.ts
+
+```ts
+import { Deploykit, Provider } from "@deploykit/core"
+import type { TestProviderConfig } from "@deploykit/test"
+import type { ClientOptions } from "./client.js"
+export type { TestProviderConfig, TestState, DeploymentRecord } from "@deploykit/test"
+export type TestClientOptions = TestProviderConfig & ClientOptions
+/**
+ * A Promise client over an in-memory provider, for testing code that deploys.
+ * Nothing leaves the process. `snapshot()` shows every app and deployment it saw.
+ */
+export declare const createTestClient: (options?: TestClientOptions) => {
+  snapshot: () => Promise<import("@deploykit/test").TestState>
+  /** The exact files a deployment was created from. */
+  artifactFor: (deploymentId: string) => Promise<import("@deploykit/core/artifact").Artifact>
+  close: () => Promise<void>
+  [Symbol.asyncDispose]: () => Promise<void>
+  getCapabilities: (options?: import("./runtime.js").RunOptions) => Promise<Provider.Capabilities>
+  createApp: (name: string, options?: import("./runtime.js").RunOptions) => Promise<Provider.App>
+  getApp: (appId: string, options?: import("./runtime.js").RunOptions) => Promise<Provider.App>
+  deleteApp: (appId: string, options?: import("./runtime.js").RunOptions) => Promise<void>
+  findAppByName: (
+    name: string,
+    options?: import("./runtime.js").RunOptions
+  ) => Promise<Provider.App | undefined>
+  setAccess: (
+    appId: string,
+    access: Provider.Access,
+    options?: import("./runtime.js").RunOptions
+  ) => Promise<void>
+  getDeployment: (
+    appId: string,
+    deploymentId: string,
+    options?: import("./runtime.js").RunOptions
+  ) => Promise<Provider.Deployment>
+  activateDeployment: (
+    appId: string,
+    deploymentId: string,
+    options?: import("./runtime.js").RunOptions
+  ) => Promise<{
+    readonly appId: string
+    readonly deploymentId: string
+    readonly state: "unknown" | "pending" | "active"
+  }>
+  getActivation: (
+    appId: string,
+    deploymentId: string,
+    options?: import("./runtime.js").RunOptions
+  ) => Promise<{
+    readonly appId: string
+    readonly deploymentId: string
+    readonly state: "unknown" | "pending" | "active"
+  }>
+  reconcileDeployment: (
+    appId: string,
+    operationId: string,
+    options?: import("./runtime.js").RunOptions
+  ) => Promise<Provider.Reconciliation>
+  listDeployments: (
+    appId: string,
+    options?: Provider.ListDeploymentsOptions & import("./runtime.js").RunOptions
+  ) => Promise<readonly Provider.Deployment[]>
+  deleteDeployment: (
+    appId: string,
+    deploymentId: string,
+    options?: import("./runtime.js").RunOptions
+  ) => Promise<void>
+  rollback: (
+    appId: string,
+    deploymentId: string,
+    options?: import("./runtime.js").RunOptions
+  ) => Promise<{
+    readonly appId: string
+    readonly deploymentId: string
+    readonly state: "unknown" | "pending" | "active"
+  }>
+  deploy: (
+    appId: string,
+    artifact: import("@deploykit/core/artifact").Artifact,
+    options?: import("./client.js").DeployOptions<object> | undefined
+  ) => Promise<Provider.Deployment>
+  waitUntilReady: (
+    appId: string,
+    deploymentId: string,
+    options?: import("./client.js").WaitOptions
+  ) => Promise<Provider.Deployment>
+  deployAndWait: (
+    appId: string,
+    artifact: import("@deploykit/core/artifact").Artifact,
+    options?:
+      | (Omit<Deploykit.DeployOptions, "onProgress"> &
+          object &
+          import("./runtime.js").RunOptions & {
+            readonly onProgress?: (progress: Provider.DeployProgress) => void | Promise<void>
+          } & {
+            readonly wait?: Omit<import("./client.js").WaitOptions, "signal">
+          })
+      | undefined
+  ) => Promise<Provider.Deployment>
+  deployDirectory: (
+    appId: string,
+    directory: string,
+    options?: import("./client.js").DeployOptions<object> | undefined
+  ) => Promise<Provider.Deployment>
+  deployManifest: (
+    appId: string,
+    manifest: unknown,
+    read: import("@deploykit/core/source").StreamReader,
+    options?: import("./client.js").DeployOptions<object> | undefined
+  ) => Promise<Provider.Deployment>
+}
+```
+
+## edge.d.ts
+
+```ts
+/**
+ * Promise clients for runtimes without a filesystem, such as Cloudflare Workers
+ * (with `nodejs_compat`, for `node:crypto` and `node:buffer`).
+ *
+ * Deploy from bytes, text or a manifest whose sources are fetched. Directory and
+ * file entries are unavailable, and files are capped at 8 MiB because larger
+ * ones are staged on disk.
+ */
+import { Artifact, Entry, Source } from "@deploykit/core"
+import type { CloudflareOptions, VercelDeployExtras, VercelOptions } from "./layers.js"
+import type { RunOptions } from "./runtime.js"
+export declare const createVercelClient: (options: VercelOptions) => {
+  close: () => Promise<void>
+  [Symbol.asyncDispose]: () => Promise<void>
+  getCapabilities: (
+    options?: RunOptions
+  ) => Promise<import("@deploykit/core/provider").Capabilities>
+  createApp: (name: string, options?: RunOptions) => Promise<import("@deploykit/core/provider").App>
+  getApp: (appId: string, options?: RunOptions) => Promise<import("@deploykit/core/provider").App>
+  deleteApp: (appId: string, options?: RunOptions) => Promise<void>
+  findAppByName: (
+    name: string,
+    options?: RunOptions
+  ) => Promise<import("@deploykit/core/provider").App | undefined>
+  setAccess: (
+    appId: string,
+    access: import("@deploykit/core/provider").Access,
+    options?: RunOptions
+  ) => Promise<void>
+  getDeployment: (
+    appId: string,
+    deploymentId: string,
+    options?: RunOptions
+  ) => Promise<import("@deploykit/core/provider").Deployment>
+  activateDeployment: (
+    appId: string,
+    deploymentId: string,
+    options?: RunOptions
+  ) => Promise<{
+    readonly appId: string
+    readonly deploymentId: string
+    readonly state: "unknown" | "pending" | "active"
+  }>
+  getActivation: (
+    appId: string,
+    deploymentId: string,
+    options?: RunOptions
+  ) => Promise<{
+    readonly appId: string
+    readonly deploymentId: string
+    readonly state: "unknown" | "pending" | "active"
+  }>
+  reconcileDeployment: (
+    appId: string,
+    operationId: string,
+    options?: RunOptions
+  ) => Promise<import("@deploykit/core/provider").Reconciliation>
+  listDeployments: (
+    appId: string,
+    options?: import("@deploykit/core/provider").ListDeploymentsOptions & RunOptions
+  ) => Promise<readonly import("@deploykit/core/provider").Deployment[]>
+  deleteDeployment: (appId: string, deploymentId: string, options?: RunOptions) => Promise<void>
+  rollback: (
+    appId: string,
+    deploymentId: string,
+    options?: RunOptions
+  ) => Promise<{
+    readonly appId: string
+    readonly deploymentId: string
+    readonly state: "unknown" | "pending" | "active"
+  }>
+  deploy: (
+    appId: string,
+    artifact: Artifact.Artifact,
+    options?: import("./client.js").DeployOptions<VercelDeployExtras> | undefined
+  ) => Promise<import("@deploykit/core/provider").Deployment>
+  waitUntilReady: (
+    appId: string,
+    deploymentId: string,
+    options?: import("./client.js").WaitOptions
+  ) => Promise<import("@deploykit/core/provider").Deployment>
+  deployAndWait: (
+    appId: string,
+    artifact: Artifact.Artifact,
+    options?:
+      | (Omit<import("@deploykit/core/deploykit").DeployOptions, "onProgress"> &
+          VercelDeployExtras &
+          RunOptions & {
+            readonly onProgress?: (
+              progress: import("@deploykit/core/provider").DeployProgress
+            ) => void | Promise<void>
+          } & {
+            readonly wait?: Omit<import("./client.js").WaitOptions, "signal">
+          })
+      | undefined
+  ) => Promise<import("@deploykit/core/provider").Deployment>
+  deployDirectory: (
+    appId: string,
+    directory: string,
+    options?: import("./client.js").DeployOptions<VercelDeployExtras> | undefined
+  ) => Promise<import("@deploykit/core/provider").Deployment>
+  deployManifest: (
+    appId: string,
+    manifest: unknown,
+    read: Source.StreamReader,
+    options?: import("./client.js").DeployOptions<VercelDeployExtras> | undefined
+  ) => Promise<import("@deploykit/core/provider").Deployment>
+}
+export declare const createCloudflareClient: (options: CloudflareOptions) => {
+  close: () => Promise<void>
+  [Symbol.asyncDispose]: () => Promise<void>
+  getCapabilities: (
+    options?: RunOptions
+  ) => Promise<import("@deploykit/core/provider").Capabilities>
+  createApp: (name: string, options?: RunOptions) => Promise<import("@deploykit/core/provider").App>
+  getApp: (appId: string, options?: RunOptions) => Promise<import("@deploykit/core/provider").App>
+  deleteApp: (appId: string, options?: RunOptions) => Promise<void>
+  findAppByName: (
+    name: string,
+    options?: RunOptions
+  ) => Promise<import("@deploykit/core/provider").App | undefined>
+  setAccess: (
+    appId: string,
+    access: import("@deploykit/core/provider").Access,
+    options?: RunOptions
+  ) => Promise<void>
+  getDeployment: (
+    appId: string,
+    deploymentId: string,
+    options?: RunOptions
+  ) => Promise<import("@deploykit/core/provider").Deployment>
+  activateDeployment: (
+    appId: string,
+    deploymentId: string,
+    options?: RunOptions
+  ) => Promise<{
+    readonly appId: string
+    readonly deploymentId: string
+    readonly state: "unknown" | "pending" | "active"
+  }>
+  getActivation: (
+    appId: string,
+    deploymentId: string,
+    options?: RunOptions
+  ) => Promise<{
+    readonly appId: string
+    readonly deploymentId: string
+    readonly state: "unknown" | "pending" | "active"
+  }>
+  reconcileDeployment: (
+    appId: string,
+    operationId: string,
+    options?: RunOptions
+  ) => Promise<import("@deploykit/core/provider").Reconciliation>
+  listDeployments: (
+    appId: string,
+    options?: import("@deploykit/core/provider").ListDeploymentsOptions & RunOptions
+  ) => Promise<readonly import("@deploykit/core/provider").Deployment[]>
+  deleteDeployment: (appId: string, deploymentId: string, options?: RunOptions) => Promise<void>
+  rollback: (
+    appId: string,
+    deploymentId: string,
+    options?: RunOptions
+  ) => Promise<{
+    readonly appId: string
+    readonly deploymentId: string
+    readonly state: "unknown" | "pending" | "active"
+  }>
+  deploy: (
+    appId: string,
+    artifact: Artifact.Artifact,
+    options?: import("./client.js").DeployOptions<object> | undefined
+  ) => Promise<import("@deploykit/core/provider").Deployment>
+  waitUntilReady: (
+    appId: string,
+    deploymentId: string,
+    options?: import("./client.js").WaitOptions
+  ) => Promise<import("@deploykit/core/provider").Deployment>
+  deployAndWait: (
+    appId: string,
+    artifact: Artifact.Artifact,
+    options?:
+      | (Omit<import("@deploykit/core/deploykit").DeployOptions, "onProgress"> &
+          object &
+          RunOptions & {
+            readonly onProgress?: (
+              progress: import("@deploykit/core/provider").DeployProgress
+            ) => void | Promise<void>
+          } & {
+            readonly wait?: Omit<import("./client.js").WaitOptions, "signal">
+          })
+      | undefined
+  ) => Promise<import("@deploykit/core/provider").Deployment>
+  deployDirectory: (
+    appId: string,
+    directory: string,
+    options?: import("./client.js").DeployOptions<object> | undefined
+  ) => Promise<import("@deploykit/core/provider").Deployment>
+  deployManifest: (
+    appId: string,
+    manifest: unknown,
+    read: Source.StreamReader,
+    options?: import("./client.js").DeployOptions<object> | undefined
+  ) => Promise<import("@deploykit/core/provider").Deployment>
+}
+export type EdgeFileInput =
+  | {
+      readonly path: string
+      readonly text: string
+    }
+  | {
+      readonly path: string
+      readonly bytes: Uint8Array
+    }
+export declare const artifactFromFiles: (
+  files: ReadonlyArray<EdgeFileInput>,
+  options?: RunOptions
+) => Promise<{
+  entries: Map<string & import("effect/Brand").Brand<"ArtifactPath">, Entry.Entry>
+}>
+export declare const artifactFromManifest: (
+  manifest: unknown,
+  read: Source.StreamReader,
+  options?: RunOptions
+) => Promise<{
+  entries: Map<
+    string & import("effect/Brand").Brand<"ArtifactPath">,
+    import("@deploykit/core/entry").Entry
+  >
+}>
+export type { VercelOptions, CloudflareOptions } from "./layers.js"
+```

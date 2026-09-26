@@ -1,0 +1,119 @@
+---
+title: Deploykit service
+description: The Effect entry point, from @deploykit/core.
+---
+
+```ts
+import { Effect } from "effect"
+import { Deploykit } from "@deploykit/core"
+
+const program = Effect.gen(function* () {
+  const deploykit = yield* Deploykit.Deploykit
+  // ...
+})
+```
+
+## Layers
+
+| Layer                             | From                    | Notes                                                         |
+| --------------------------------- | ----------------------- | ------------------------------------------------------------- |
+| `Vercel.layerConfig(limits?)`     | `@deploykit/vercel`     | Reads `VERCEL_TOKEN`, `VERCEL_TEAM_ID`                        |
+| `Vercel.layer(options)`           | `@deploykit/vercel`     | [Client options](/docs/vercel#client-options) plus limits     |
+| `Cloudflare.layerConfig(limits?)` | `@deploykit/cloudflare` | Reads `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`         |
+| `Cloudflare.layer(options)`       | `@deploykit/cloudflare` | [Client options](/docs/cloudflare#client-options) plus limits |
+| `Deploykit.layer(limits?)`        | `@deploykit/core`       | Over any `Provider.DeploymentProvider` in context             |
+
+All of them need a `FileSystem`, for example `NodeFileSystem.layer` from `@effect/platform-node`.
+`limits` is `{ memoryBudgetBytes?, stagingBudgetBytes?, maxFileBytes? }`; see
+[Limits](/docs/core/limits#memory-and-disk). The budgets are created once per layer and shared by every
+deploy through it.
+
+`layerConfig` fails with a `ConfigError` when a required variable is missing.
+
+## Methods
+
+Every method returns an `Effect` with no further requirements.
+
+| Method                                              | Succeeds with    | Fails with                                                      |
+| --------------------------------------------------- | ---------------- | --------------------------------------------------------------- |
+| `createApp(name)`                                   | `App`            | `ProviderError`                                                 |
+| `getApp(appId)`                                     | `App`            | `ProviderError`                                                 |
+| `deleteApp(appId)`                                  | `void`           | `ProviderError`                                                 |
+| `findAppByName(name)`                               | `Option<App>`    | `ProviderError`, `UnsupportedError`                             |
+| `setAccess(appId, access)`                          | `void`           | `ProviderError`, `UnsupportedError`                             |
+| `deploy(appId, artifact, options?)`                 | `Deployment`     | [Deploy errors](/docs/core/errors#which-method-fails-with-what) |
+| `deployDirectory(appId, directory, options?)`       | `Deployment`     | Deploy errors, plus file system errors                          |
+| `deployManifest(appId, manifest, source, options?)` | `Deployment`     | Deploy errors                                                   |
+| `getDeployment(appId, deploymentId)`                | `Deployment`     | `ProviderError`                                                 |
+| `activateDeployment(appId, deploymentId)`           | `Activation`     | `ProviderError`, `UnsupportedError`                             |
+| `getActivation(appId, deploymentId)`                | `Activation`     | `ProviderError`, `UnsupportedError`                             |
+| `reconcileDeployment(appId, operationId)`           | `Reconciliation` | `ProviderError`, `UnsupportedError`                             |
+
+`capabilities` is a plain `Capabilities` value, not an Effect.
+
+### deployManifest
+
+`manifest` is `unknown` and is validated for you, so the result of `JSON.parse` works directly.
+`source` is a `FileSource`:
+
+```ts
+import { Source } from "@deploykit/core"
+
+export const source = Source.fromReadableStream(async (reference, signal) => {
+  const response = await fetch(
+    `https://artifacts.example.test/objects/${encodeURIComponent(reference)}`,
+    {
+      signal,
+      redirect: "error"
+    }
+  )
+  if (!response.ok || response.body === null) {
+    await response.body?.cancel()
+    throw new Error(`Artifact read failed: ${response.status}`)
+  }
+  return response.body
+})
+```
+
+Replace this illustrative origin with your authorized artifact store and resolve opaque
+references according to your storage mapping. `Source.fromPromise` accepts a reader returning
+`Promise<Uint8Array>` for small files; the streaming reader avoids that allocation.
+
+### Deploy options
+
+`Deploykit.DeployOptions` is `Provider.DeployOptions` without the budgets, which the layer owns:
+
+| Field         | Type                                      |
+| ------------- | ----------------------------------------- |
+| `target`      | `"production" \| "preview"`               |
+| `activation`  | `"automatic" \| "deferred"`               |
+| `operationId` | `string`                                  |
+| `meta`        | `Record<string, string>`                  |
+| `onProgress`  | `(event: DeployProgress) => Effect<void>` |
+
+For Vercel's upload options, see [Uploads](/docs/vercel/uploads#per-deploy).
+
+## Cancelling
+
+Interrupt the fiber. See [Lifecycle](/docs/core/lifecycle).
+
+## Without Deploykit
+
+`Provider.DeploymentProvider` is the raw contract underneath. It has the same apps and deployment
+methods, but optional ones are `undefined` when unsupported, and `deploy` takes budgets directly.
+Use it for [Platform](/docs/core/apps#the-platform-service), [tests](/docs/tools/testing), or writing a
+provider. Provide it with `Vercel.vercelLayer`, `Vercel.layerWith(client)`,
+`Cloudflare.cloudflareLayer` or `Cloudflare.layerWith(client)`.
+
+## Waiting and deployment management
+
+The service also exposes `waitUntilReady`, `deployAndWait`, `listDeployments`,
+`deleteDeployment` and `rollback`. Their result semantics match the
+[Promise reference](/docs/reference/client#waiting); Effect calls use fiber interruption instead of
+`AbortSignal`. Effect wait options are `{ schedule?, tolerateFailures? }`, not millisecond fields.
+Supply a bounded schedule and use `Effect.timeout` for a hard overall deadline.
+
+`waitUntilReady` fails with `ProviderError` or `DeploymentTimeoutError` and returns a terminal
+failed deployment as data. `deployAndWait` additionally raises `DeploymentFailedError` for that
+failed status. The management operations can fail with `UnsupportedError` when unavailable.
+Exact signatures and requirements are in the [generated core reference](/docs/reference/api/core).

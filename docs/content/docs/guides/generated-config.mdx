@@ -1,0 +1,76 @@
+---
+title: Add generated configuration
+description: Combine generated text, local files and caller-owned verification.
+---
+
+Use an artifact when your publish output mixes generated files and prepared assets.
+The destination path, not the local filename, determines where each file is deployed.
+
+## Generate a provider-compatible artifact
+
+{/* example: examples/docs/generated-config.ts */}
+
+```ts
+import { artifactFromFiles } from "@deploykit/node"
+import { createClient } from "@deploykit/node/vercel"
+import type { VercelOptions } from "@deploykit/node/vercel"
+
+export async function publishGeneratedConfig(
+  config: VercelOptions,
+  input: { appId: string; operationId: string; title: string; logoFile: string }
+) {
+  const artifact = await artifactFromFiles([
+    { path: ".vercel/output/config.json", text: '{"version":3}' },
+    { path: ".vercel/output/static/index.html", text: "<h1>My site</h1>" },
+    {
+      path: ".vercel/output/static/config.json",
+      text: JSON.stringify({ title: input.title })
+    },
+    { path: ".vercel/output/static/logo.png", file: input.logoFile }
+  ])
+  const client = createClient(config)
+  try {
+    return await client.deploy(input.appId, artifact, {
+      operationId: input.operationId,
+      target: "production",
+      activation: "deferred"
+    })
+  } finally {
+    await client.close()
+  }
+}
+```
+
+The config remains ordinary website content. Deploykit does not need to understand its
+fields, your product model, or why a new file was added. `file` entries are streamed when
+consumed; `text` and `bytes` are already resident in the caller's memory.
+
+## Add to an existing prepared tree
+
+Effect callers can load `Artifact.fromDirectory(directory)`, construct `Entry.text(path, json)`
+and combine them with `Artifact.add`. `add` rejects a duplicate path rather than silently
+replacing content. For intentional overlay behavior, use the [artifact reference](/docs/reference/files)
+and choose the overwrite policy explicitly.
+
+## Check the generated file after deployment
+
+Use the `verify` callback in the [Vercel quickstart](/docs/guides/vercel):
+
+```ts
+const expected = JSON.stringify({ title: "Customer site" })
+const verify = async (url: string, signal: AbortSignal) => {
+  const response = await fetch(`${url}/config.json`, {
+    signal,
+    redirect: "manual"
+  })
+  if (!response.ok || (await response.text()) !== expected) {
+    throw new Error("Published configuration differs from the expected bytes")
+  }
+}
+```
+
+This is a consumer check. Games, screen runtimes, images and new verification steps do not
+require changes to deploykit. A check failing does not delete the created deployment.
+Save the receipt before checking so you can inspect or retry verification independently.
+
+See [file helpers](/docs/reference/files) for exact inputs, reading behavior and errors.

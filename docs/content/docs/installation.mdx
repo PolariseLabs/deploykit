@@ -1,0 +1,121 @@
+---
+title: Installation
+description: Install deploykit and choose the right runtime boundary.
+---
+
+## Requirements
+
+Use Node **22.19 or newer** or Bun. Keep provider credentials in your backend.
+The Promise API uses Effect internally; your application does not need Effect imports.
+Effect applications must use `effect@4.0.0-rc.112` and matching platform packages.
+
+## Promise applications
+
+Install the alpha release with your package manager:
+
+```bash
+npm install @deploykit/node@alpha
+```
+
+Or with Bun:
+
+```bash
+bun add @deploykit/node@alpha
+```
+
+This package includes both provider adapters and the pinned Effect runtime. Your application
+uses normal `async`/`await` and does not need to import Effect. Choose the provider through
+`@deploykit/node/vercel` or `@deploykit/node/cloudflare`.
+
+## Effect applications
+
+For Vercel:
+
+```bash
+npm install @deploykit/core@alpha @deploykit/vercel@alpha effect@4.0.0-rc.112 @effect/platform-node@4.0.0-rc.112
+```
+
+For Cloudflare Pages:
+
+```bash
+npm install @deploykit/core@alpha @deploykit/cloudflare@alpha effect@4.0.0-rc.112 @effect/platform-node@4.0.0-rc.112
+```
+
+Keep the Effect versions aligned across your application. When installing the Node platform
+directly, pin its shared runtime in your existing package configuration, then run `npm install`:
+
+```json title="package.json"
+{
+  "overrides": {
+    "@effect/platform-node-shared": "4.0.0-rc.112"
+  }
+}
+```
+
+## Optional packages
+
+```bash
+npm install --save-dev @deploykit/test@alpha @effect/vitest@4.0.0-rc.112
+npm install --save-dev @deploykit/devtools@alpha effect@4.0.0-rc.112 @effect/platform-node@4.0.0-rc.112
+```
+
+The test package supplies an in-memory provider. Devtools supplies a local dashboard and event
+collector. See [testing](/docs/tools/testing) and [devtools](/docs/tools/devtools).
+
+The `alpha` tag selects the current prerelease. Commit your lockfile and review release notes
+before updating; the public API can change during alpha.
+
+## Configure TypeScript
+
+The examples use strict TypeScript with ESM. A Node application can start with:
+
+```json title="tsconfig.json"
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "NodeNext",
+    "strict": true,
+    "noEmit": true,
+    "allowImportingTsExtensions": true
+  }
+}
+```
+
+Install the typechecking tools with `npm install --save-dev typescript @types/node`,
+and set `"type": "module"` in your application’s `package.json`.
+Example imports use `.ts` for Node's built-in TypeScript support; bundled applications
+can follow their bundler's conventions.
+
+## Add credentials
+
+For Vercel:
+
+```bash title=".env"
+VERCEL_TOKEN=your-token
+VERCEL_TEAM_ID=your-team-id
+VERCEL_PROJECT_ID=your-isolated-project-id
+```
+
+For Cloudflare Pages:
+
+```bash title=".env"
+CLOUDFLARE_API_TOKEN=your-token
+CLOUDFLARE_ACCOUNT_ID=your-account-id
+CLOUDFLARE_PROJECT_ID=your-pages-project-name
+```
+
+Create a Vercel token for the destination team, or a Cloudflare API token with Pages
+edit access in the selected account. The project variables above are conventions used
+by these guides, not variables read automatically by the SDK.
+
+Bun loads `.env`; for Node examples use `node --env-file=.env your-script.ts`.
+Keep `.env` out of deployed artifacts. `deployDirectory` includes dotfiles.
+
+## Run your first deployment
+
+- [Vercel quickstart](/docs/guides/vercel): prepared directory, persisted receipt, bounded wait and verification.
+- [Pages quickstart](/docs/guides/pages): a preview publish with explicit branch configuration.
+- [Effect integration](/docs/guides/effect): layers, requirements and typed failures.
+
+For a standalone script, close the client in `finally`. In a server or worker,
+[reuse one client or runtime](/docs/core/lifecycle) across calls to share resource budgets.

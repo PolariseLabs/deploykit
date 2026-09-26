@@ -1,0 +1,329 @@
+---
+title: "@deploykit/vercel"
+description: "Complete generated public declarations for @deploykit/vercel."
+---
+
+This reference is generated from the built package. Start with the [guides](/docs) for working examples and the [API overview](/docs/reference) for task-oriented reference.
+
+## Import paths
+
+Only the import paths below are public. Supporting declaration modules describe the types reachable through those exports; their filenames are not additional public import paths.
+
+| Import                      | Declaration module |
+| --------------------------- | ------------------ |
+| `@deploykit/vercel`         | `index.d.ts`       |
+| `@deploykit/vercel/control` | `control.d.ts`     |
+
+## index.d.ts
+
+```ts
+import { Config, FileSystem, Layer } from "effect"
+import { Deploykit, Provider } from "@deploykit/core"
+import type { DeployRequestOptions } from "./services/deployments.js"
+import type { VercelClient } from "./services/client.js"
+import type { VercelHttpConfig } from "./services/http.js"
+export declare const vercelLayer: Layer.Layer<
+  Provider.DeploymentProvider,
+  Config.ConfigError,
+  FileSystem.FileSystem
+>
+/** The same adapter over a client the caller built. The escape hatch, and how tests wire it. */
+export declare const layerWith: (
+  client: VercelClient,
+  defaults?: UploadDefaults
+) => Layer.Layer<Provider.DeploymentProvider, never, FileSystem.FileSystem>
+/** `Deploykit` on Vercel: the layer most Effect apps want. Requires a `FileSystem`. */
+export declare const layer: (
+  options: VercelHttpConfig & Deploykit.Limits & UploadDefaults
+) => Layer.Layer<Deploykit.Deploykit, Provider.TransferLimitError, FileSystem.FileSystem>
+/** `layer`, reading credentials from `VERCEL_TOKEN` and `VERCEL_TEAM_ID`. */
+export declare const layerConfig: (
+  options?: Deploykit.Limits & UploadDefaults
+) => Layer.Layer<
+  Deploykit.Deploykit,
+  Config.ConfigError | Provider.TransferLimitError,
+  FileSystem.FileSystem
+>
+/** Upload tuning set once for every deploy; a deploy's own options still win. */
+export type UploadDefaults = Pick<
+  DeployRequestOptions,
+  "uploadRounds" | "uploadConcurrency" | "uploadOrder"
+>
+export { makeVercelClient } from "./services/http.js"
+export type { VercelHttpConfig } from "./services/http.js"
+export { VercelApiError } from "./services/client.js"
+export type {
+  CreateDeploymentRequest,
+  VercelClient,
+  VercelDeploymentLike,
+  VercelFileRef,
+  VercelProjectLike,
+  VercelReadyState
+} from "./services/client.js"
+export type { DeployRequestOptions } from "./services/deployments.js"
+export {
+  controlLayerWith,
+  makeVercelControl,
+  vercelClientFromConfig,
+  vercelControlLayer
+} from "./control.js"
+export { uploadThrottlePresets } from "./services/throttle.js"
+export type { UploadThrottle, UploadThrottleLimits } from "./services/throttle.js"
+```
+
+## services/deployments.d.ts
+
+```ts
+import type { Entry } from "@deploykit/core/entry"
+import { Effect } from "effect"
+import type { FileSystem } from "effect"
+import { Artifact, Provider } from "@deploykit/core"
+import type { VercelClient } from "./client.js"
+export declare const bytesOf: (
+  fs: FileSystem.FileSystem,
+  entry: Entry
+) => Effect.Effect<
+  Uint8Array<ArrayBufferLike>,
+  | Provider.ValidationError
+  | Provider.SourceError
+  | Provider.IntegrityError
+  | Provider.TransferLimitError,
+  never
+>
+export interface DeployRequestOptions extends Provider.DeployOptions {
+  /** Missing-file negotiation rounds, independent of transport retries. */
+  readonly uploadRounds?: number
+  /** Parallel uploads still share the caller's memory and staging budgets. */
+  readonly uploadConcurrency?: number
+  readonly uploadOrder?: "manifest" | "largest-first"
+}
+export declare const deployToVercelProject: (
+  vercel: VercelClient,
+  fs: FileSystem.FileSystem,
+  appId: string,
+  artifact: Artifact.Artifact,
+  options?: DeployRequestOptions
+) => Effect.Effect<
+  Provider.Deployment,
+  | Provider.ProviderError
+  | Provider.UnsupportedError
+  | Provider.ValidationError
+  | Provider.SourceError
+  | Provider.IntegrityError
+  | Provider.TransferLimitError,
+  never
+>
+```
+
+## services/client.d.ts
+
+```ts
+import type { Effect, Scope } from "effect"
+import { Schema } from "effect"
+export declare const VERCEL_API = "https://api.vercel.com"
+declare const VercelApiError_base: Schema.Class<
+  VercelApiError,
+  Schema.TaggedStruct<
+    "VercelApiError",
+    {
+      readonly message: Schema.String
+      readonly operation: Schema.String
+      readonly requestId: Schema.optional<Schema.String>
+      readonly deploymentId: Schema.optional<Schema.String>
+      readonly code: Schema.optional<Schema.String>
+      readonly statusCode: Schema.optional<Schema.Number>
+      readonly body: Schema.optional<Schema.String>
+      readonly retryAfterMs: Schema.optional<Schema.Number>
+    }
+  >,
+  import("effect/Cause").YieldableError
+>
+export declare class VercelApiError extends VercelApiError_base {}
+export declare const vercelReadyState: Schema.Literals<
+  readonly ["QUEUED", "INITIALIZING", "BUILDING", "READY", "ERROR", "CANCELED", "BLOCKED"]
+>
+export type VercelReadyState = typeof vercelReadyState.Type
+/** The fields this adapter reads off a Vercel deployment. */
+export declare const vercelDeployment: Schema.Struct<{
+  readonly id: Schema.Union<readonly [Schema.String, Schema.Number]>
+  readonly readyState: Schema.Literals<
+    readonly ["QUEUED", "INITIALIZING", "BUILDING", "READY", "ERROR", "CANCELED", "BLOCKED"]
+  >
+  readonly target: Schema.optional<Schema.String>
+  readonly name: Schema.optional<Schema.String>
+  readonly projectId: Schema.optional<Schema.Union<readonly [Schema.String, Schema.Number]>>
+  readonly url: Schema.optional<Schema.String>
+  /** Why a failed deployment failed, when Vercel says. */
+  readonly readyStateReason: Schema.optional<Schema.String>
+}>
+export type VercelDeploymentLike = typeof vercelDeployment.Type
+/** The fields this adapter reads off a Vercel project. */
+export declare const vercelProject: Schema.Struct<{
+  readonly id: Schema.String
+  readonly name: Schema.String
+  readonly targets: Schema.optional<
+    Schema.Struct<{
+      readonly production: Schema.optional<
+        Schema.Struct<{
+          readonly id: Schema.String
+        }>
+      >
+    }>
+  >
+}>
+export type VercelProjectLike = typeof vercelProject.Type
+/** One entry of the manifest `createDeployment` is given. */
+export interface VercelFileRef {
+  readonly file: string
+  readonly sha: string
+  readonly size: number
+}
+export interface CreateDeploymentRequest {
+  readonly projectId: string
+  readonly name: string
+  readonly files: ReadonlyArray<VercelFileRef>
+  readonly target: "production" | "preview"
+  /** Arbitrary metadata, for linking a deployment back to a release. */
+  readonly meta?: Readonly<Record<string, string>>
+  readonly autoAssignCustomDomains?: boolean
+}
+export type ProjectAccess =
+  | {
+      readonly _tag: "Public"
+    }
+  | {
+      readonly _tag: "VercelAuth"
+    }
+  | {
+      readonly _tag: "Password"
+      readonly password: string
+    }
+export declare const missingShas: (error: VercelApiError) => ReadonlyArray<string> | undefined
+/** A manifest rejected because Vercel holds none of the referenced bytes. */
+export declare const isMissingDigest: (error: VercelApiError) => boolean
+export interface VercelClient {
+  readonly promoteDeployment?: (
+    projectId: string,
+    deploymentId: string
+  ) => Effect.Effect<void, VercelApiError>
+  readonly findDeployments?: (
+    projectId: string,
+    operationId: string
+  ) => Effect.Effect<
+    {
+      readonly deployments: ReadonlyArray<VercelDeploymentLike>
+      readonly complete: boolean
+    },
+    VercelApiError
+  >
+  /** GET /v7/deployments for one project, newest first. Deleted deployments are left out. */
+  readonly listDeployments?: (
+    projectId: string,
+    options: {
+      readonly target?: "production" | "preview"
+      readonly limit: number
+    }
+  ) => Effect.Effect<ReadonlyArray<VercelDeploymentLike>, VercelApiError>
+  readonly deleteDeployment?: (deploymentId: string) => Effect.Effect<void, VercelApiError>
+  readonly createProject: (name: string) => Effect.Effect<VercelProjectLike, VercelApiError>
+  readonly getProject: (idOrName: string) => Effect.Effect<VercelProjectLike, VercelApiError>
+  readonly deleteProject: (idOrName: string) => Effect.Effect<void, VercelApiError>
+  /** POST /v2/files. The digest is the sha1 of the bytes, in hex. */
+  readonly uploadFileStream?: (
+    sha: string,
+    byteLength: number,
+    open: Effect.Effect<ReadableStream<Uint8Array>, never, Scope.Scope>
+  ) => Effect.Effect<void, VercelApiError>
+  readonly uploadFile: (sha: string, bytes: Uint8Array) => Effect.Effect<void, VercelApiError>
+  readonly createDeployment: (
+    request: CreateDeploymentRequest
+  ) => Effect.Effect<VercelDeploymentLike, VercelApiError>
+  readonly getDeployment: (idOrUrl: string) => Effect.Effect<VercelDeploymentLike, VercelApiError>
+  readonly setProjectAccess: (
+    idOrName: string,
+    access: ProjectAccess
+  ) => Effect.Effect<void, VercelApiError>
+}
+export {}
+```
+
+## services/http.d.ts
+
+```ts
+import { type UploadThrottle } from "./throttle.js"
+import * as Provider from "@deploykit/core/provider"
+import { type VercelClient } from "./client.js"
+export interface VercelHttpConfig {
+  readonly token: string
+  /** Acts on behalf of a team, when the token is not already scoped to one. */
+  readonly teamId?: string
+  /** Override for testing against a recorded or local endpoint. */
+  readonly baseUrl?: string
+  /** Defaults to the global fetch, so a caller can supply their own. */
+  readonly fetch?: typeof globalThis.fetch
+  /** Shared by uploads and retries through this client; omitted preserves unpaced uploads. */
+  readonly uploadThrottle?: UploadThrottle
+  readonly retry?: Provider.RetryOptions
+  readonly timeoutMs?: number
+  /** Shares request rate with other processes using the same token. */
+  readonly gate?: Provider.RequestGate
+}
+export declare const makeVercelClient: (config: VercelHttpConfig) => VercelClient
+```
+
+## services/throttle.d.ts
+
+```ts
+import { Effect } from "effect"
+import { VercelApiError } from "./client.js"
+export interface UploadThrottleLimits {
+  readonly concurrency: number
+  readonly intervalMs: number
+}
+export declare const uploadThrottlePresets: {
+  readonly conservative: {
+    readonly concurrency: 4
+    readonly intervalMs: 250
+  }
+  readonly balanced: {
+    readonly concurrency: 8
+    readonly intervalMs: 100
+  }
+  readonly fast: {
+    readonly concurrency: 16
+    readonly intervalMs: 0
+  }
+}
+export type UploadThrottle = keyof typeof uploadThrottlePresets | UploadThrottleLimits
+/** One client shares upload permits, pacing and server cooldown across its callers. */
+export declare const makeUploadThrottle: (option: UploadThrottle | undefined) => {
+  validate: Effect.Effect<void, never, never> | Effect.Effect<never, VercelApiError, never>
+  run: <A, E, R>(effect: Effect.Effect<A, E, R>) => Effect.Effect<A, E, R>
+  cooldown: (delayMs: number) => Effect.Effect<void, never, never>
+}
+```
+
+## control.d.ts
+
+```ts
+import { Config, Effect, Layer } from "effect"
+import * as Provider from "@deploykit/core/provider"
+import type { VercelClient } from "./services/client.js"
+/** The control-plane half of the adapter, over a client the caller built. */
+export declare const makeVercelControl: (vercel: VercelClient) => Provider.ControlPlane
+/** Reads VERCEL_TOKEN, falling back to VERCEL_API_KEY, plus VERCEL_TEAM_ID. */
+export declare const vercelClientFromConfig: Effect.Effect<VercelClient, Config.ConfigError, never>
+export declare const vercelControlLayer: Layer.Layer<
+  Provider.DeploymentControl,
+  Config.ConfigError,
+  never
+>
+/** The same over a client the caller built, which is also the escape hatch. */
+export declare const controlLayerWith: (
+  client: VercelClient
+) => Layer.Layer<Provider.DeploymentControl, never, never>
+export { makeVercelClient } from "./services/http.js"
+export type { VercelHttpConfig } from "./services/http.js"
+export { VercelApiError } from "./services/client.js"
+export type { VercelClient } from "./services/client.js"
+```

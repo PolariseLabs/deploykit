@@ -1,0 +1,211 @@
+---
+title: Manifests
+description: Deploy files from object storage without copying them to local disk.
+---
+
+import { Step, Steps } from "fumadocs-ui/components/steps"
+import { Tab, Tabs } from "fumadocs-ui/components/tabs"
+
+A manifest is a JSON list of files: each one's path, size, SHA-256 hash and a reference to where
+its bytes are stored. At deploy time, deploykit fetches files through a function you provide, only
+when it needs them.
+
+Use a manifest when:
+
+- your files live in S3, R2 or similar, not on the deploying machine,
+- one process plans a deploy and another carries it out,
+- you want a record of exactly what was deployed.
+
+## The format
+
+```json title="manifest.json"
+{
+  "version": 1,
+  "entries": [
+    {
+      "path": "index.html",
+      "byteLength": 1024,
+      "source": "sites/acme/v42/index.html",
+      "sha256": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"
+    }
+  ]
+}
+```
+
+| Field          | Meaning                                                                           |
+| -------------- | --------------------------------------------------------------------------------- |
+| `path`         | Where the file is served in the deployment                                        |
+| `byteLength`   | Exact size in bytes                                                               |
+| `source`       | A reference you choose and resolve later, such as a storage key                   |
+| `sha256`       | Lowercase hex SHA-256 of the raw bytes                                            |
+| `fingerprints` | Optional host hashes that [save downloads](#skipping-downloads-with-fingerprints) |
+
+Don't put signed URLs or credentials in `source`: manifests get stored and logged. Resolve the
+reference to a URL inside your reader instead.
+
+A manifest holds up to 20,000 files and 16 MiB of JSON.
+
+## A complete pipeline
+
+A build job hashes the output and uploads it to storage. Later, a deploy job deploys from storage.
+The two only share the manifest.
+
+<Steps>
+<Step>
+
+### Build: hash the output and assign references
+
+<Tabs groupId="api" items={["Effect", "Promise"]} persist>
+<Tab value="Promise">
+
+```ts title="build-job.ts"
+import { manifestFromDirectory } from "@deploykit/node"
+
+const prefix = `sites/${siteId}/${buildId}`
+
+const manifest = await manifestFromDirectory("./build", {
+  source: path => `${prefix}/${path}`
+})
+```
+
+</Tab>
+<Tab value="Effect">
+
+```ts title="build-job.ts"
+import * as ManifestBuilder from "@deploykit/core/manifest-builder"
+
+const prefix = `sites/${siteId}/${buildId}`
+
+const manifest = ManifestBuilder.fromDirectory("./build", {
+  source: path => `${prefix}/${path}`
+}) // Effect<Manifest>, needs a FileSystem
+```
+
+</Tab>
+</Tabs>
+
+Hashing streams each file, so it never holds a whole file in memory. It hashes four files at a
+time by default; set `concurrency` (1 to 32) and `timeoutMs` per file to change that. To build from
+an artifact rather than a directory, use `manifestFromArtifact` / `ManifestBuilder.fromArtifact`.
+
+</Step>
+<Step>
+
+### Build: upload the files and the manifest
+
+Upload each file to its `source` reference with your storage SDK, then save the manifest.
+Use immutable keys, such as ones with a build id, so a file can't change after it's hashed.
+
+```ts title="build-job.ts"
+for (const entry of manifest.entries) {
+  await storage.put(entry.source, await readFile(`./build/${entry.path}`))
+}
+await storage.put(`${prefix}/manifest.json`, JSON.stringify(manifest))
+```
+
+</Step>
+<Step>
+
+### Deploy: read the manifest and stream the files
+
+<Tabs groupId="api" items={["Effect", "Promise"]} persist>
+<Tab value="Promise">
+
+```ts title="deploy-job.ts"
+import { deploykit } from "./deploykit"
+
+const manifest = await storage.getText(`${prefix}/manifest.json`)
+
+const deployment = await deploykit.deployManifest(appId, manifest, async (reference, signal) => {
+  const response = await fetch(await storage.signedUrl(reference), {
+    signal
+  })
+  if (!response.ok || !response.body) throw new Error(`Cannot read ${reference}`)
+  return response.body
+})
+```
+
+`manifest` can be the JSON string or the parsed object.
+
+</Tab>
+<Tab value="Effect">
+
+```ts title="deploy-job.ts"
+import { Effect } from "effect"
+import { Deploykit, Source } from "@deploykit/core"
+
+const read = async (reference: string, signal: AbortSignal) => {
+  const response = await fetch(await storage.signedUrl(reference), { signal })
+  if (!response.ok || !response.body) throw new Error(`Cannot read ${reference}`)
+  return response.body
+}
+
+const deploy = (appId: string, manifest: unknown) =>
+  Effect.gen(function* () {
+    const deploykit = yield* Deploykit.Deploykit
+    return yield* deploykit.deployManifest(appId, manifest, Source.fromReadableStream(read))
+  })
+```
+
+`manifest` can be any value, such as the result of `JSON.parse`: `deployManifest` validates it.
+For a JSON string, decode it first with `Manifest.fromJson`.
+
+</Tab>
+</Tabs>
+
+</Step>
+</Steps>
+
+## Writing the reader
+
+- It may be called more than once for the same file, for example on a retry. Return a **fresh**
+  stream every time.
+- Pass `signal` on, so a cancelled deploy stops downloading.
+- Throwing turns into a `SourceError` for that file, which fails the deploy.
+- Reading a file has a 30 second limit.
+
+Each file is checked against its `byteLength` and `sha256` as it streams. If one doesn't match,
+the deploy fails with `IntegrityError` instead of publishing the wrong bytes.
+
+With Effect you can also implement `FileSource` directly: `{ open: reference => Stream }`. For
+small files, `Source.fromPromise((reference, signal) => Promise<Uint8Array>)` is simpler.
+
+## Skipping downloads with fingerprints
+
+Hosts identify files by their own hash, not SHA-256. deploykit needs that hash to ask the host
+which files it's missing.
+
+**Without fingerprints,** the adapter downloads every file once to compute the host's hash, then
+downloads the missing ones again to upload them. Files the host already has still cost one download.
+
+**With fingerprints,** it asks the host straight away and only downloads what's missing.
+
+```json
+{
+  "path": "index.html",
+  "byteLength": 1024,
+  "source": "sites/acme/v42/index.html",
+  "sha256": "9f86d08...",
+  "fingerprints": [{ "recipe": "vercel-sha1-v1", "context": "", "value": "a94a8fe..." }]
+}
+```
+
+| Host             | `recipe`                      | `context`                                   | `value`                        |
+| ---------------- | ----------------------------- | ------------------------------------------- | ------------------------------ |
+| Vercel           | `vercel-sha1-v1`              | `""`                                        | SHA-1 of the raw bytes, hex    |
+| Cloudflare Pages | `cloudflare-blake3-b64ext-v1` | File extension without the dot, e.g. `html` | Pages' BLAKE3-based asset hash |
+
+The manifest builder only computes SHA-256, so add fingerprints yourself when you know them.
+For Pages, `@deploykit/cloudflare` exports `pagesDigest` to compute its hash. Unknown recipes are
+ignored, and a Pages fingerprint is ignored if the file's extension changed.
+
+<Callout type="warn">
+  When the host says it already has a file, deploykit doesn't re-read it to check. A wrong
+  fingerprint publishes whatever the host has under that hash. deploykit trusts whoever built the
+  manifest.
+</Callout>
+
+## Encoding
+
+`Manifest.encode(value)` returns canonical JSON: paths and fingerprints sorted, fields in a fixed
+order. Two manifests for the same files encode identically, so you can compare or hash them.

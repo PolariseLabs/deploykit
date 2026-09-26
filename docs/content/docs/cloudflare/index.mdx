@@ -1,0 +1,193 @@
+---
+title: Setup
+description: Connect deploykit to Cloudflare Pages.
+---
+
+import { Step, Steps } from "fumadocs-ui/components/steps"
+import { Tab, Tabs } from "fumadocs-ui/components/tabs"
+
+<Steps>
+<Step>
+
+### Install
+
+Follow the [installation guide](/docs/installation) to install the alpha packages,
+then configure the provider below.
+
+</Step>
+<Step>
+
+### Add credentials
+
+In the Cloudflare dashboard, create an API token with the **Cloudflare Pages: Edit** permission,
+and copy your account id.
+
+```bash title=".env"
+CLOUDFLARE_API_TOKEN=...
+CLOUDFLARE_ACCOUNT_ID=...
+```
+
+</Step>
+<Step>
+
+### Create the client
+
+<Tabs groupId="api" items={["Effect", "Promise"]} persist>
+<Tab value="Promise">
+
+```ts title="src/deploykit.ts"
+import { createClient } from "@deploykit/node/cloudflare"
+
+export const deploykit = createClient({
+  apiToken: process.env.CLOUDFLARE_API_TOKEN!,
+  accountId: process.env.CLOUDFLARE_ACCOUNT_ID!
+})
+```
+
+</Tab>
+<Tab value="Effect">
+
+```ts title="src/deploykit.ts"
+import { Layer } from "effect"
+import { NodeFileSystem } from "@effect/platform-node"
+import * as Cloudflare from "@deploykit/cloudflare"
+
+// Reads CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID from the environment.
+export const DeploykitLive = Cloudflare.layerConfig().pipe(Layer.provide(NodeFileSystem.layer))
+```
+
+To pass options, use `layer` instead:
+
+```ts
+export const DeploykitLive = Cloudflare.layer({
+  apiToken,
+  accountId,
+  previewBranch: "preview"
+}).pipe(Layer.provide(NodeFileSystem.layer))
+```
+
+</Tab>
+</Tabs>
+
+</Step>
+</Steps>
+
+## Client options
+
+| Option                                                    | Default                                         | What it does                                                            |
+| --------------------------------------------------------- | ----------------------------------------------- | ----------------------------------------------------------------------- |
+| `apiToken`                                                | required                                        | Cloudflare API token                                                    |
+| `accountId`                                               | required                                        | Account that owns the projects                                          |
+| `previewBranch`                                           | none                                            | Enables [preview deployments](#preview-deployments)                     |
+| `retry`                                                   | `{ attempts: 4 }`                               | Retries for reads and uploads                                           |
+| `timeoutMs`                                               | `30000`                                         | Time limit per HTTP operation, including retries                        |
+| `fetch`                                                   | global `fetch`                                  | Custom HTTP transport                                                   |
+| `memoryBudgetBytes`, `stagingBudgetBytes`, `maxFileBytes` | see [Limits](/docs/core/limits#memory-and-disk) | Shared memory and disk caps                                             |
+| `onEvent`                                                 | none                                            | Telemetry callback (Promise API). See [Telemetry](/docs/core/telemetry) |
+
+## What to deploy
+
+The site's files at the root of the artifact, exactly as they should be served. This is what your
+framework puts in `dist/` or `build/`:
+
+```
+index.html
+about/index.html
+assets/app.js
+_worker.js       (optional, see Workers)
+```
+
+```ts
+await deploykit.deployDirectory(appId, "./dist")
+```
+
+To run server code, add a [`_worker.js`](/docs/cloudflare/workers).
+
+<Callout type="warn">
+  Pages' `_headers`, `_redirects` and `_routes.json` files aren't applied yet: they're uploaded as
+  ordinary files. Set headers and redirects from your worker instead.
+</Callout>
+
+## Deploy options
+
+Pages supports the [core options](/docs/core/deploying#options) only. `activation: "deferred"`,
+`operationId` and `meta` fail with `UnsupportedError` before anything is uploaded.
+
+## Preview deployments
+
+Pages decides production versus preview by branch name. Set `previewBranch` on the client, then
+deploy with `target: "preview"`:
+
+<Tabs groupId="api" items={["Effect", "Promise"]} persist>
+<Tab value="Promise">
+
+```ts
+const deploykit = createClient({
+  apiToken,
+  accountId,
+  previewBranch: "preview"
+})
+
+const preview = await deploykit.deployDirectory(appId, "./dist", {
+  target: "preview"
+})
+```
+
+</Tab>
+<Tab value="Effect">
+
+```ts
+const PreviewLive = Cloudflare.layer({
+  apiToken,
+  accountId,
+  previewBranch: "preview"
+})
+
+const preview = Effect.gen(function* () {
+  const deploykit = yield* Deploykit.Deploykit
+  return yield* deploykit.deployDirectory(appId, "./dist", {
+    target: "preview"
+  })
+})
+```
+
+</Tab>
+</Tabs>
+
+The branch must differ from the project's production branch. Without `previewBranch`,
+`target: "preview"` is rejected, and `capabilities.previewDeployments` is `false`.
+
+## Limits
+
+| Limit           | Value                       |
+| --------------- | --------------------------- |
+| Static file     | 25 MiB (Cloudflare's limit) |
+| `_worker.js`    | 8 MiB                       |
+| Uploads at once | 4 per deploy                |
+
+Files over 25 MiB fail with `TransferLimitError` before upload, whatever your budgets allow.
+
+## Not supported
+
+| Feature                    | What to do instead                                                         |
+| -------------------------- | -------------------------------------------------------------------------- |
+| Deferred activation        | Every production deploy goes live when ready. Use a preview to check first |
+| Recovering a lost response | Check the project's deployments in Cloudflare before retrying              |
+| Access control             | Use Cloudflare Access on the project's domain                              |
+
+## A new project's first URL
+
+A new project's `*.pages.dev` address can take 30 to 60 seconds to start resolving after its first
+deploy. Give `waitUntilServing` a generous `timeoutMs`, such as 120 seconds.
+
+## Separate coordinator and worker
+
+`@deploykit/cloudflare/control` has no upload code and can be bundled for the browser or an edge
+runtime:
+
+```ts title="coordinator.ts"
+import { makeCloudflareClient, makeCloudflareControl } from "@deploykit/cloudflare/control"
+
+const control = makeCloudflareControl(makeCloudflareClient({ apiToken, accountId }))
+// control.createApp, getDeployment, ... all return Effects
+```

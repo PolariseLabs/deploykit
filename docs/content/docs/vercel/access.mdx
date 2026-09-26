@@ -1,0 +1,50 @@
+---
+title: Access control
+description: Password-protect a project or put it behind Vercel SSO.
+---
+
+import { Tab, Tabs } from "fumadocs-ui/components/tabs"
+
+<Tabs groupId="api" items={["Effect", "Promise"]} persist>
+<Tab value="Promise">
+
+```ts
+await deploykit.setAccess(appId, {
+  _tag: "Password",
+  password: "correct-horse"
+})
+await deploykit.setAccess(appId, { _tag: "SingleSignOn" })
+await deploykit.setAccess(appId, { _tag: "Public" })
+```
+
+</Tab>
+<Tab value="Effect">
+
+```ts
+import { Effect } from "effect"
+import { Deploykit } from "@deploykit/core"
+
+const protect = (appId: string, password: string) =>
+  Effect.gen(function* () {
+    const deploykit = yield* Deploykit.Deploykit
+    yield* deploykit.setAccess(appId, { _tag: "Password", password })
+  })
+```
+
+</Tab>
+</Tabs>
+
+| `_tag`         | Visitors need                       |
+| -------------- | ----------------------------------- |
+| `Public`       | Nothing                             |
+| `Password`     | The password                        |
+| `SingleSignOn` | To be signed in to your Vercel team |
+
+This changes the **project's** settings, so it applies to every deployment in it, including ones
+already live. Password protection may need a paid Vercel plan.
+
+Once a project is protected, `waitUntilServing` and your own checks see Vercel's login page, not
+your site, so they won't pass. Run your checks before turning protection on.
+
+With the [Platform service](/docs/core/apps#the-platform-service), use `platform.apps.setAccess`.
+Cloudflare Pages doesn't support access control; `setAccess` fails with `UnsupportedError` there.

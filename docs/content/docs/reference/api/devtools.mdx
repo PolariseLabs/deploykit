@@ -1,0 +1,162 @@
+---
+title: "@deploykit/devtools"
+description: "Complete generated public declarations for @deploykit/devtools."
+---
+
+This reference is generated from the built package. Start with the [guides](/docs) for working examples and the [API overview](/docs/reference) for task-oriented reference.
+
+## Import paths
+
+Only the import paths below are public. Supporting declaration modules describe the types reachable through those exports; their filenames are not additional public import paths.
+
+| Import                | Declaration module |
+| --------------------- | ------------------ |
+| `@deploykit/devtools` | `index.d.ts`       |
+
+## index.d.ts
+
+```ts
+import { Effect } from "effect"
+import type { Options } from "./collector.js"
+export { makeCollector } from "./collector.js"
+export type { Options, RecordedEvent, Run } from "./collector.js"
+/** Keep the enclosing scope open for as long as the local dashboard is needed. */
+export declare const make: (
+  options?: Options & {
+    readonly port?: number
+  }
+) => Effect.Effect<
+  {
+    url: string
+    track: <A, E, R>(
+      effect: Effect.Effect<A, E, R>,
+      settings: {
+        readonly label: string
+        readonly correlationId?: string
+      }
+    ) => Effect.Effect<A, E, Exclude<R, never>>
+    snapshot: Effect.Effect<
+      {
+        timestamp: number
+        processRssBytes: number
+        dropped: number
+        exportFailures: number
+        pending: number
+        omittedRuns: number
+        runs: {
+          durationMs: number
+          id: string
+          correlationId: string
+          label: string
+          startedAt: number
+          status: "running" | "success" | "failure" | "interrupted" | "unknown"
+          events: ReadonlyArray<import("./collector.js").RecordedEvent>
+          omittedEvents: number
+          stats: import("./collector.js").Stats
+        }[]
+      },
+      never,
+      never
+    >
+    flush: Effect.Effect<boolean, never, never>
+  },
+  import("effect/unstable/http/HttpServerError").ServeError,
+  import("effect/Scope").Scope
+>
+```
+
+## collector.d.ts
+
+```ts
+import { Effect } from "effect"
+import * as Telemetry from "@deploykit/core/telemetry"
+export interface RecordedEvent {
+  readonly version: 1
+  readonly runId: string
+  readonly correlationId: string
+  readonly sequence: number
+  readonly timestamp: string
+  readonly elapsedMs: number
+  readonly event:
+    | Telemetry.Event
+    | {
+        readonly kind: "run.started"
+      }
+    | {
+        readonly kind: "run.finished"
+        readonly outcome: "success" | "failure" | "interrupted"
+        readonly failure?: Telemetry.Failure
+      }
+}
+export interface OperationStats {
+  readonly count: number
+  readonly totalMs: number
+  readonly maxMs: number
+  readonly failures: number
+}
+export interface Stats {
+  readonly operations: Readonly<Record<string, OperationStats>>
+  readonly cachedContents: number
+  readonly inputFiles: number
+  readonly inputBytes: number
+  readonly uploadedFiles: number
+  readonly uploadedBytes: number
+  readonly uploadTotal: number
+  readonly retries: number
+  readonly retryDelayMs: number
+  readonly finishedOperations: number
+  readonly failedOperations: number
+}
+export interface Run {
+  readonly id: string
+  readonly correlationId: string
+  readonly label: string
+  readonly startedAt: number
+  readonly durationMs: number
+  readonly status: "running" | "success" | "failure" | "interrupted" | "unknown"
+  readonly events: ReadonlyArray<RecordedEvent>
+  readonly omittedEvents: number
+  readonly stats: Stats
+}
+export interface Options {
+  readonly onEvent?: (event: RecordedEvent) => Effect.Effect<void, unknown>
+}
+/** The bounded exporter runs separately so slow telemetry cannot hold up publishing. */
+export declare const makeCollector: (options?: Options) => Effect.Effect<
+  {
+    track: <A, E, R>(
+      effect: Effect.Effect<A, E, R>,
+      settings: {
+        readonly label: string
+        readonly correlationId?: string
+      }
+    ) => Effect.Effect<A, E, Exclude<R, never>>
+    snapshot: Effect.Effect<
+      {
+        timestamp: number
+        processRssBytes: number
+        dropped: number
+        exportFailures: number
+        pending: number
+        omittedRuns: number
+        runs: {
+          durationMs: number
+          id: string
+          correlationId: string
+          label: string
+          startedAt: number
+          status: "running" | "success" | "failure" | "interrupted" | "unknown"
+          events: ReadonlyArray<RecordedEvent>
+          omittedEvents: number
+          stats: Stats
+        }[]
+      },
+      never,
+      never
+    >
+    flush: Effect.Effect<boolean, never, never>
+  },
+  never,
+  import("effect/Scope").Scope
+>
+```

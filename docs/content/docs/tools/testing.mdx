@@ -1,0 +1,113 @@
+---
+title: Testing
+description: Test your deploy code without touching a real host.
+---
+
+`@deploykit/test` is an in-memory provider with the full contract. Each `getDeployment` call moves a
+deployment one step, `pending` → `deploying` → `deployed`, like a very fast build. Deployed ones get
+a URL like `https://<name>.test.deploykit.dev`.
+
+Install `@deploykit/test@alpha` using the [installation guide](/docs/installation). For the examples below,
+also install the matching `@effect/vitest@4.0.0-rc.112` test integration.
+
+## Testing code that uses Deploykit
+
+Put `Deploykit.layer()` on top of the test provider, in place of `Vercel.layerConfig()`:
+
+```ts title="tests/layers.ts"
+import { Layer } from "effect"
+import { NodeFileSystem } from "@effect/platform-node"
+import { Deploykit } from "@deploykit/core"
+import * as Test from "@deploykit/test"
+
+export const testLayer = (config?: Test.TestProviderConfig) =>
+  Deploykit.layer().pipe(
+    Layer.provideMerge(Test.layer(config)),
+    Layer.provideMerge(NodeFileSystem.layer)
+  )
+```
+
+```ts title="tests/publish.test.ts"
+import { Effect } from "effect"
+import { describe, expect, it } from "@effect/vitest"
+import { Artifact, Deploykit, Entry } from "@deploykit/core"
+import * as Test from "@deploykit/test"
+import { testLayer } from "./layers"
+
+describe("publish", () => {
+  it.effect("deploys the generated config", () =>
+    Effect.gen(function* () {
+      const deploykit = yield* Deploykit.Deploykit
+      const app = yield* deploykit.createApp("acme")
+      const artifact = yield* Artifact.make([yield* Entry.text("config.json", "{}")])
+
+      const deployment = yield* deploykit.deploy(app.id, artifact)
+
+      const test = yield* Test.TestProvider
+      const deployed = yield* test.artifactFor(deployment.id)
+      expect(Artifact.fileCount(deployed)).toBe(1)
+    }).pipe(Effect.provide(testLayer()))
+  )
+})
+```
+
+`Test.TestProvider` lets you inspect what happened:
+
+| Handle                      | Returns                            |
+| --------------------------- | ---------------------------------- |
+| `snapshot`                  | Every app and deployment recorded  |
+| `artifactFor(deploymentId)` | The exact files that were deployed |
+| `accessFor(appId)`          | The last access setting            |
+
+## Simulating failures
+
+Pass options to reproduce what's hard to trigger on a real host. App ids are `app-1`, `app-2` and
+so on, in creation order.
+
+| Option                 | Simulates                                                 |
+| ---------------------- | --------------------------------------------------------- |
+| `failOn.createApp`     | These app **names** fail to create, like a name clash     |
+| `failOn.getApp`        | These app ids fail to load                                |
+| `failOn.deleteApp`     | These app ids fail to delete                              |
+| `failOn.deploy`        | Deploys to these app ids are rejected                     |
+| `failOn.build`         | Deploys to these app ids are accepted, then end `failed`  |
+| `lostCreateResponse`   | Deploys to these app ids succeed but the response is lost |
+| `neverFinish`          | Deployments on these app ids never finish                 |
+| `failFirstPolls`       | The first N `getDeployment` calls fail                    |
+| `failPollsAt`          | These `getDeployment` call numbers fail                   |
+| `withoutAdoptByName`   | A host without `findAppByName`                            |
+| `withoutAccessControl` | A host without `setAccess`                                |
+
+```ts
+it.effect("recovers a lost response", () =>
+  Effect.gen(function* () {
+    // ...
+  }).pipe(Effect.provide(testLayer({ lostCreateResponse: ["app-1"] })))
+)
+```
+
+The test provider also supports deferred activation, previews and reconciliation, like Vercel.
+`activateDeployment` only accepts a `deployed` deployment and switches to `active` at once.
+`reconcileDeployment` finds deployments by the `operationId` you passed, so a lost response followed
+by reconciling returns `Recovered`.
+
+## Testing the Platform service
+
+Provide `Test.MemoryAppStore.layer()` as the [app store](/docs/core/apps#writing-the-app-store):
+
+```ts
+import { Layer } from "effect"
+import { Platform } from "@deploykit/core"
+import * as Test from "@deploykit/test"
+
+const platformTestLayer = Platform.layer.pipe(
+  Layer.provideMerge(Test.layer()),
+  Layer.provideMerge(Test.MemoryAppStore.layer())
+)
+```
+
+## Promise API
+
+`@deploykit/node` clients always talk to a real host. To test Promise code, pass a custom `fetch`
+to `createClient` and answer requests yourself, or put your deploy logic behind an interface you
+can fake.

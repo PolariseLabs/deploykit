@@ -1,13 +1,13 @@
-import { Effect, Layer, Schedule } from "effect"
+import { Effect, Layer } from "effect"
 import { NodeFileSystem } from "@effect/platform-node"
 import { Deploykit, Platform, Provider } from "@deploykit/core"
 import * as Vercel from "@deploykit/vercel"
 
-export const publishEffect = (input: {
+export const publishEffect = <E>(input: {
   appId: string
   directory: string
   operationId: string
-  recordCreated: (deployment: Provider.Deployment) => Effect.Effect<void, Provider.ValidationError>
+  recordCreated: (deployment: Provider.Deployment) => Effect.Effect<void, E>
 }) =>
   Effect.gen(function* () {
     const client = yield* Deploykit.Deploykit
@@ -17,12 +17,7 @@ export const publishEffect = (input: {
       operationId: input.operationId
     })
     yield* input.recordCreated(created)
-    const ready = yield* client.getDeployment(input.appId, created.id).pipe(
-      Effect.repeat({
-        until: deployment => Provider.isTerminal(deployment.status),
-        schedule: Schedule.spaced("1 second")
-      })
-    )
+    const ready = yield* client.waitUntilReady(input.appId, created.id)
     if (ready.status !== "deployed" || ready.url === undefined) {
       return yield* new Provider.ValidationError({ message: ready.reason ?? "Deployment failed" })
     }

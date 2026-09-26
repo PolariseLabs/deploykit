@@ -1,0 +1,4 @@
+{
+  "title": "Full API",
+  "pages": ["core", "node", "vercel", "cloudflare", "devtools", "test"]
+}

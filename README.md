@@ -5,7 +5,7 @@ chooses when to deploy, checks the result and decides when to activate it.
 
 ## Status
 
-`0.1.0-alpha.1` is unpublished and not fully provider-qualified.
+`0.1.0-alpha.1` is an alpha release candidate and is not fully provider-qualified.
 Vercel and Cloudflare Pages have local adapter tests and packed consumer proofs.
 A real Vercel smoke test on 2026-09-25 verified HTML, CSS, a Node.js function and a
 9 MiB streamed asset in a temporary project, with SHA-256 checks and confirmed cleanup.
@@ -34,6 +34,13 @@ is claimed compatible. Runtime checks run on Node and Bun. Node must be at least
 Core imports no provider SDK. Snapshots, releases, storage authorization, durable
 workflows, database provisioning and application/browser checkers belong to callers.
 A new game, generated configuration file or publishing step needs no SDK release.
+
+## Documentation
+
+Start with the [Vercel quickstart](docs/content/docs/guides/vercel.mdx),
+[Pages quickstart](docs/content/docs/guides/pages.mdx) or [Effect guide](docs/content/docs/guides/effect.mdx).
+The [API reference](docs/content/docs/reference/index.mdx) covers all six packages.
+See [docs development](docs/README.md) to run the searchable documentation site locally.
 
 ## Usage
 
@@ -237,13 +244,6 @@ Create and activation writes are single-attempt, including throttling responses.
 Vercel's missing-file negotiation is separate: up to three rejected-manifest upload rounds.
 A lost or malformed create response is ambiguous, never permission to create again.
 
-Progress callbacks are best-effort and bounded to 100 ms each. Upload `bytes` reports
-acknowledged raw bytes for that batch, excluding cache hits and duplicate transport attempts.
-Persist operation intent before calling, and persist returned deployment IDs. Progress is
-not a receipt and interruption cannot guarantee a receipt reaches the caller.
-
-## Capabilities and activation
-
 `Provider.recoveryOf(error)` (also exported by `@deploykit/node`) turns any of these into
 one of `retry`, `reconcile`, `wait`, `fix-input` or `unsupported`.
 
@@ -252,6 +252,13 @@ them together. Pass a `gate` to either HTTP client (or `createClient`): it is as
 before every request and told about every 429. Back it with Redis or similar; it fails
 open if the store is down. Without a gate, each process paces only itself.
 
+Progress callbacks are best-effort and bounded to 100 ms each. Upload `bytes` reports
+acknowledged raw bytes for that batch, excluding cache hits and duplicate transport attempts.
+Persist operation intent before calling, and persist returned deployment IDs. Progress is
+not a receipt and interruption cannot guarantee a receipt reaches the caller.
+
+## Capabilities and activation
+
 | Behaviour                      | Vercel                                                                   | Pages                                                                                |
 | ------------------------------ | ------------------------------------------------------------------------ | ------------------------------------------------------------------------------------ |
 | Automatic production deploy    | Implemented                                                              | Implemented                                                                          |
@@ -259,6 +266,7 @@ open if the store is down. Without a gate, each process paces only itself.
 | Explicit preview               | Existing target option; first-deployment semantics require qualification | Requires configured `previewBranch`, checked against the project's production branch |
 | Correlation recovery           | `operationId`, bounded metadata lookup                                   | Unsupported; explicit metadata/correlation requests fail before writes               |
 | Access control                 | Public/password/SSO modes                                                | Not exposed by this adapter                                                          |
+| List, rollback, delete         | Rollback promotes an older ready production deployment                   | Rollback uses the Pages rollback endpoint                                            |
 
 Use `{ target: "production", activation: "deferred", operationId }` to stage a Vercel
 deployment. After caller checks, call the optional control-plane `activateDeployment`
@@ -266,7 +274,6 @@ and observe `getActivation`. Activation requires a ready production deployment b
 to the app. It does not rebuild a preview. Request acceptance returns `pending`; a separate
 observation can establish `active`. Other routing states remain `unknown`.
 
-| List, rollback, delete         | Rollback promotes an older ready production deployment                   | Rollback uses the Pages rollback endpoint                                            |
 Reconciliation returns `Recovered` only for one matching deployment in a complete search
 window; zero/multiple matches and incomplete windows return `Unknown`. There is no
 exactly-once, absence or resume promise. Activation may race another caller or alter
@@ -280,13 +287,6 @@ error type, so coordinators do not need to import the transfer entry point.
 rejects external/dynamic imports and transfer modules. Keep full adapter and transfer
 imports in the worker, not the coordinator.
 
-## Development and qualification
-
-```sh
-bun install --frozen-lockfile
-bun run typecheck
-bun run test
-bun run lint
 ## Deployment history
 
 `listDeployments(appId, { target: "production" })` returns one page, newest first.
@@ -317,6 +317,13 @@ Out of scope. Per-tenant domains (add, DNS records, verification, removal) are a
 lifecycle that tools such as [Domain SDK](https://www.domain-sdk.dev/) already cover across
 providers. Pass them deploykit's `app.id`: it is the Vercel project ID or Pages project name.
 
+## Development and qualification
+
+```sh
+bun install --frozen-lockfile
+bun run typecheck
+bun run test
+bun run lint
 bun run format:check
 bun run check:control
 bun run check:packages

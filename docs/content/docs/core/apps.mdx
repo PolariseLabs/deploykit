@@ -1,0 +1,134 @@
+---
+title: Apps
+description: One provider project per site, created exactly once.
+---
+
+import { Tab, Tabs } from "fumadocs-ui/components/tabs"
+
+An **app** is a project on the host: a Vercel project or a Pages project. Most SaaS products give
+each customer their own. Every deploy needs an app id.
+
+## Managing apps
+
+<Tabs groupId="api" items={["Effect", "Promise"]} persist>
+<Tab value="Promise">
+
+```ts
+const app = await deploykit.createApp("acme-site") // { id, name }
+await deploykit.getApp(app.id)
+await deploykit.deleteApp(app.id)
+
+// Find an existing project by name. undefined if there isn't one.
+const existing = await deploykit.findAppByName("acme-site")
+```
+
+</Tab>
+<Tab value="Effect">
+
+```ts
+import { Effect, Option } from "effect"
+import { Deploykit } from "@deploykit/core"
+
+const program = Effect.gen(function* () {
+  const deploykit = yield* Deploykit.Deploykit
+  const app = yield* deploykit.createApp("acme-site")
+  yield* deploykit.getApp(app.id)
+  yield* deploykit.deleteApp(app.id)
+
+  // Option.none() if there isn't one.
+  const existing = yield* deploykit.findAppByName("acme-site")
+  if (Option.isSome(existing)) console.log(existing.value.id)
+})
+```
+
+</Tab>
+</Tabs>
+
+Store `app.id` against your customer as soon as `createApp` returns. Names must be unique on the
+host, so a retried `createApp` with the same name fails. Use `findAppByName` to pick up a project
+you created but didn't record.
+
+## The Platform service
+
+<Callout>Effect API only.</Callout>
+
+Creating an app per customer has a race: two requests for a new customer can both create a project.
+`Platform` solves that with a small store you provide, mapping your customer id to the host's app
+id. It also has a ready-made `waitUntilReady`.
+
+```ts title="src/platform.ts"
+import { Effect, Layer } from "effect"
+import { NodeFileSystem } from "@effect/platform-node"
+import { Artifact, Platform } from "@deploykit/core"
+import * as Vercel from "@deploykit/vercel"
+import { AppStoreLive } from "./appStore"
+
+export const publish = (customerId: string, artifact: Artifact.Artifact) =>
+  Effect.gen(function* () {
+    const platform = yield* Platform.Platform
+
+    const app = yield* platform.apps.getOrCreate({
+      externalId: customerId,
+      name: `site-${customerId}`
+    })
+    const deployment = yield* platform.deploy(app, { artifact })
+    return yield* platform.deployments.waitUntilReady(app.id, deployment.id)
+  })
+
+// Platform sits on the raw provider layer, not on Deploykit.
+export const PlatformLive = Platform.layer.pipe(
+  Layer.provide(Vercel.vercelLayer),
+  Layer.provide(AppStoreLive),
+  Layer.provide(NodeFileSystem.layer)
+)
+```
+
+| Method                                         | Does                                                 |
+| ---------------------------------------------- | ---------------------------------------------------- |
+| `apps.getOrCreate({ externalId, name })`       | The customer's app, creating it at most once         |
+| `apps.get(appId)`                              | Look up an app                                       |
+| `apps.delete({ externalId, appId })`           | Delete the project and forget the mapping            |
+| `apps.setAccess(appId, access)`                | Present only if the provider supports access control |
+| `deploy(app, { artifact, ...options })`        | Deploy                                               |
+| `deployments.get(appId, deploymentId)`         | Read a deployment                                    |
+| `deployments.waitUntilReady(appId, id, opts?)` | Poll until final                                     |
+| `capabilities`                                 | What the provider supports                           |
+
+`getOrCreate` checks your store first, then adopts an existing project with that name if the host
+can find one, and only then creates a new one. If it loses a race, it deletes the project it just
+made and returns the winner's.
+
+`waitUntilReady` polls every second for up to five minutes and tolerates three failed polls in a
+row. Pass `{ schedule, tolerateFailures }` to change that. If the build is still running at the end
+it fails with `DeploymentTimeoutError`, which includes `lastStatus`.
+
+<Callout>
+  `platform.deploy` goes straight to the provider, so it doesn't share the `Deploykit` layer's
+  budgets. To keep one budget across everything, use `Platform` for apps and `Deploykit` for
+  deploys, over the same provider layer.
+</Callout>
+
+### Writing the app store
+
+Back it with your database. Each method returns an Effect; report database failures as
+`Platform.AppStoreError`.
+
+```ts title="src/appStore.ts"
+import { Layer } from "effect"
+import { Platform } from "@deploykit/core"
+
+export const AppStoreLive = Layer.succeed(Platform.TenantAppStore, {
+  // Option.some(appId) if this customer has an app, otherwise Option.none().
+  get: externalId => db.findAppId(externalId),
+
+  // Save only if nothing is saved yet. Must be atomic.
+  // Succeed with { _tag: "Stored" } or { _tag: "AlreadyRecorded", appId }.
+  put: (externalId, appId) => db.insertIfAbsent(externalId, appId),
+
+  // Remove the mapping. Removing one that isn't there is not an error.
+  forget: externalId => db.deleteAppId(externalId)
+})
+```
+
+`put` must be atomic, using a unique constraint or a conditional write. That's the one guarantee
+deploykit can't provide itself. For tests, use [`MemoryAppStore`](/docs/tools/testing#testing-the-platform-service).

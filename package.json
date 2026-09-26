@@ -19,7 +19,9 @@
     "check:control": "bun scripts/check-control-bundle.ts",
     "check:packages": "bun run build && bun scripts/check-packages.ts",
     "benchmark": "bun run build && bun scripts/benchmark.ts",
-    "devtools": "bun examples/devtools.ts"
+    "devtools": "bun examples/devtools.ts",
+    "docs:sync": "bun run build && bun scripts/docs.ts --write",
+    "check:docs": "bun run build && bun scripts/docs.ts"
   },
   "devDependencies": {
     "@deploykit/cloudflare": "workspace:*",

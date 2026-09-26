@@ -1,0 +1,141 @@
+---
+title: Artifacts
+description: Describe the files you want to deploy.
+---
+
+import { Tab, Tabs } from "fumadocs-ui/components/tabs"
+
+An artifact is the set of files to deploy, keyed by destination path. Paths are checked as you add
+them, so a bad path fails straight away rather than halfway through an upload.
+
+You don't always need one: `deployDirectory` and `deployManifest` build it for you. Build one
+yourself when you want to add, generate or combine files.
+
+## From a directory
+
+Every file under the directory, recursively, including dotfiles. Paths are relative to the directory.
+
+<Tabs groupId="api" items={["Effect", "Promise"]} persist>
+<Tab value="Promise">
+
+```ts
+import { artifactFromDirectory } from "@deploykit/node"
+
+const artifact = await artifactFromDirectory("./build")
+```
+
+</Tab>
+<Tab value="Effect">
+
+```ts
+import { Artifact } from "@deploykit/core"
+
+const artifact = Artifact.fromDirectory("./build") // Effect<Artifact>, needs a FileSystem
+```
+
+</Tab>
+</Tabs>
+
+File contents are read when they're uploaded, not now. Nothing is filtered out, so remove anything
+you don't want public before deploying.
+
+## From individual files
+
+Mix in-memory content with files from disk.
+
+<Tabs groupId="api" items={["Effect", "Promise"]} persist>
+<Tab value="Promise">
+
+```ts
+import { artifactFromFiles } from "@deploykit/node"
+
+const artifact = await artifactFromFiles([
+  { path: "index.html", text: "<h1>Hello</h1>" },
+  { path: "logo.png", file: "./assets/logo.png" },
+  { path: "data.bin", bytes: new Uint8Array([1, 2, 3]) }
+])
+```
+
+</Tab>
+<Tab value="Effect">
+
+```ts
+import { Effect } from "effect"
+import { Artifact, Entry } from "@deploykit/core"
+
+const artifact = Effect.gen(function* () {
+  return yield* Artifact.make([
+    yield* Entry.text("index.html", "<h1>Hello</h1>"),
+    yield* Entry.file("logo.png", "./assets/logo.png"),
+    yield* Entry.bytes("data.bin", new Uint8Array([1, 2, 3]))
+  ])
+})
+```
+
+</Tab>
+</Tabs>
+
+| Entry                   | Content                          | Read when         |
+| ----------------------- | -------------------------------- | ----------------- |
+| `text` / `Entry.text`   | A string                         | Already in memory |
+| `bytes` / `Entry.bytes` | A `Uint8Array`                   | Already in memory |
+| `file` / `Entry.file`   | A path on disk; size is read now | At upload         |
+
+Two files at the same path fail with `DuplicatePathError`. An unsafe path, such as one with `..`,
+fails with `InvalidArtifactPathError`.
+
+## A template plus generated files
+
+A common pattern is one prepared template plus a generated file per customer. `Artifact.add`
+returns a new artifact and leaves the original alone, so you can reuse the template.
+
+```ts
+import { Effect } from "effect"
+import { Artifact, Entry } from "@deploykit/core"
+
+const forCustomer = (template: Artifact.Artifact, config: object) =>
+  Effect.gen(function* () {
+    const file = yield* Entry.text("config.json", JSON.stringify(config))
+    return yield* Artifact.add(template, file)
+  })
+```
+
+## Inspecting an artifact
+
+```ts
+Artifact.fileCount(artifact) // number of files
+Artifact.list(artifact) // entries, in insertion order
+Artifact.has(artifact, "index.html") // Effect<boolean>
+Artifact.get(artifact, "index.html") // Effect<Option<Entry>>
+```
+
+## Layers that override each other
+
+When files come from several places, such as a template, generated config and user uploads,
+`Artifact.layered` stacks them with later layers winning. Unlike a plain merge, it records every
+override so you can see what replaced what.
+
+```ts
+import { Artifact } from "@deploykit/core"
+
+const result = Artifact.layered([
+  { name: "template", entries: templateEntries },
+  { name: "generated", entries: generatedEntries },
+  { name: "uploads", entries: uploadEntries }
+])
+
+result.artifact // what to deploy
+result.overrides // [{ path, winner: "uploads", replaced: "template" }, ...]
+result.layerOf(path) // which layer the surviving file came from
+
+// Two files in the same layer claimed one path. Almost always a bug.
+Artifact.collisionsWithinLayers(result)
+
+// Per layer: how many files it contributed, and how many survived.
+Artifact.summarise(layers, result)
+```
+
+## Files stored elsewhere
+
+If the files are in object storage rather than on local disk, describe them with a
+[manifest](/docs/core/manifests) and deploykit streams them in at upload time.

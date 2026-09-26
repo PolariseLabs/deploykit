@@ -1,0 +1,62 @@
+---
+title: Troubleshooting
+description: Find the failing boundary before retrying a deployment.
+---
+
+## My deployment is READY but the URL returns 404
+
+Provider readiness can precede serving availability. Save the receipt, then use
+`waitUntilServing` with a deadline before application checks. Do not create another deployment
+just to retry a GET. After activation, allow routing propagation and verify the expected content,
+not only HTTP 200.
+
+## My production URL did not change
+
+`activation: "deferred"` intentionally leaves production routing alone. Call activation
+separately, poll `getActivation`, then check the expected URL. A project's default domain can
+be truncated or different from its name; read the domain from the provider instead of constructing it.
+
+## The serving check redirects to login
+
+The deployment is protected. The default checker does not follow redirects, so login HTML
+cannot masquerade as your app. Supply an authenticated caller-owned checker if needed.
+Password protection and other Vercel features may require account entitlements.
+
+## I received HTTP 429
+
+Read and content-addressed upload retries honor `Retry-After`, or Vercel's reset header on 429.
+The request deadline and attempt count still apply. Use an upload throttle preset to share pacing
+within a client; it does not raise quotas. Creation and activation are not automatically retried.
+See [upload tuning](/docs/vercel/uploads) and [recovery](/docs/guides/recovery).
+
+## Every publish uploads everything
+
+Check which boundary is doing the work. Rebuilding a manifest hashes files; reading to compute a
+provider fingerprint is different from uploading. Use a persisted immutable manifest with valid
+provider fingerprints to avoid those reads. Inspect `cache`, `input` and upload progress events.
+A cache miss after eviction is normal and needs a replayable source.
+
+## A large file exceeds the memory budget
+
+Transfer reservations are conservative and are not equal to file size or process RSS.
+An 8 MiB buffered file needs substantially more than 8 MiB of reservation capacity.
+Larger Vercel files use staged streaming. Check [file, memory and disk limits](/docs/core/limits)
+before raising concurrency. Source adapters and your application can allocate memory outside SDK budgets.
+
+## A source passed once and now fails integrity
+
+Your manifest identifies exact bytes. A mutable URL, reused consumed stream, expired credentials
+or changed file can break replay. Reopen a fresh stream to immutable content; resolve signed URLs
+at read time. Fix the source or make a new manifest for changed content.
+
+## TypeScript reports incompatible Effect types
+
+Keep Effect and its platform packages on `4.0.0-rc.112`. Check for multiple versions with your
+package manager and apply the [installation override](/docs/installation). Browser control imports
+must not pull the transfer entry point or the Promise Node package.
+
+## I cannot tell whether creation happened
+
+Keep the original operation ID and receipt, if one exists. Follow [recovery](/docs/guides/recovery).
+Do not infer absence from a timeout, cancellation, empty search or a failed application check.
+Use request IDs and structured telemetry for diagnosis.

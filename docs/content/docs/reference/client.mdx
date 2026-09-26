@@ -1,0 +1,105 @@
+---
+title: Promise client
+description: Every method on createClient, from @deploykit/node.
+---
+
+```ts
+import { createClient } from "@deploykit/node/vercel" // or "@deploykit/node/cloudflare"
+
+const deploykit = createClient(options)
+```
+
+Options are the provider's [Vercel](/docs/vercel#client-options) or
+[Cloudflare](/docs/cloudflare#client-options) client options.
+
+Every method returns a Promise and takes an optional last argument with `signal`. For deploy
+methods, `signal` goes in the deploy options. Errors are thrown as the classes in
+[Errors](/docs/core/errors), plus `AbortError` and `ClientClosedError`.
+
+## Apps
+
+| Method                     | Returns            | Notes                                                  |
+| -------------------------- | ------------------ | ------------------------------------------------------ |
+| `createApp(name)`          | `App`              | `{ id, name }`                                         |
+| `getApp(appId)`            | `App`              |                                                        |
+| `deleteApp(appId)`         | `void`             | Deletes the project and all its deployments            |
+| `findAppByName(name)`      | `App \| undefined` | Optional capability `adoptByName`                      |
+| `setAccess(appId, access)` | `void`             | Vercel only. See [Access control](/docs/vercel/access) |
+
+## Deploying
+
+| Method                                            | Returns      | Notes                                                                  |
+| ------------------------------------------------- | ------------ | ---------------------------------------------------------------------- |
+| `deploy(appId, artifact, options?)`               | `Deployment` | See [Deploying](/docs/core/deploying)                                  |
+| `deployDirectory(appId, directory, options?)`     | `Deployment` | Every file under `directory`                                           |
+| `deployManifest(appId, manifest, read, options?)` | `Deployment` | `manifest` is JSON or an object. See [Manifests](/docs/core/manifests) |
+| `getDeployment(appId, deploymentId)`              | `Deployment` | Current status                                                         |
+
+## Activation (Vercel)
+
+| Method                                    | Returns          | Notes                                     |
+| ----------------------------------------- | ---------------- | ----------------------------------------- |
+| `activateDeployment(appId, deploymentId)` | `Activation`     | See [Activation](/docs/vercel/activation) |
+| `getActivation(appId, deploymentId)`      | `Activation`     |                                           |
+| `reconcileDeployment(appId, operationId)` | `Reconciliation` | Find a deployment after a lost response   |
+
+## Client
+
+| Method                  | Returns        | Notes                                                                             |
+| ----------------------- | -------------- | --------------------------------------------------------------------------------- |
+| `getCapabilities()`     | `Capabilities` | What this provider supports                                                       |
+| `close()`               | `void`         | Cancel running calls and release resources. See [Lifecycle](/docs/core/lifecycle) |
+| `[Symbol.asyncDispose]` |                | Same as `close`, for `await using`                                                |
+
+## Helpers from `@deploykit/node`
+
+These don't need a client.
+
+| Function                                       | Returns                                                                          |
+| ---------------------------------------------- | -------------------------------------------------------------------------------- |
+| `artifactFromDirectory(directory)`             | `Artifact`                                                                       |
+| `artifactFromFiles(files)`                     | `Artifact`. Each file is `{ path, text }`, `{ path, bytes }` or `{ path, file }` |
+| `artifactFromManifest(manifest, read)`         | `Artifact`                                                                       |
+| `manifestFromDirectory(directory, { source })` | `Manifest`                                                                       |
+| `manifestFromArtifact(artifact, { source })`   | `Manifest`                                                                       |
+| `waitUntilServing(url, options?)`              | The accepted HTTP status                                                         |
+
+All take an optional `signal` in their last argument.
+
+See [Types](/docs/reference/types) for `App`, `Deployment`, `Activation` and the rest.
+
+## Waiting
+
+`waitUntilReady(appId, deploymentId, options?)` polls an existing receipt until the provider
+reports a terminal status. It returns failed deployments too; check `status` before using the URL.
+It can throw `DeploymentTimeoutError` or `ProviderError`.
+
+| Promise wait option | Default  | Meaning                                       |
+| ------------------- | -------- | --------------------------------------------- |
+| `intervalMs`        | `1000`   | Delay between observations                    |
+| `timeoutMs`         | `300000` | Polling schedule duration                     |
+| `tolerateFailures`  | `3`      | Stop on this many consecutive provider errors |
+| `signal`            | Unset    | Cancel polling and in-flight requests         |
+
+The schedule duration is not a hard deadline for an in-flight request. Use an `AbortSignal`
+deadline as in the quickstarts to bound the whole operation.
+
+`deployAndWait(appId, artifact, { ...deployOptions, wait })` creates and waits in one call.
+Unlike `waitUntilReady`, it raises `DeploymentFailedError` for a failed deployment.
+It does not check HTTP serving or application behavior. Use separate creation and waiting
+when you need to persist the receipt immediately, as the quickstarts do.
+
+## Managing existing deployments
+
+| Method                                            | Returns                     | Meaning                                                              |
+| ------------------------------------------------- | --------------------------- | -------------------------------------------------------------------- |
+| `listDeployments(appId, options?)`                | `ReadonlyArray<Deployment>` | One page, newest first; optional `target` and `limit`                |
+| `deleteDeployment(appId, deploymentId, options?)` | `void`                      | Delete a deployment; adapter checks current production routing first |
+| `rollback(appId, deploymentId, options?)`         | `Activation`                | Request production routing to an earlier eligible deployment         |
+
+Each accepts cancellation. Listing defaults to 20 entries and clamps a finite limit to 1–100;
+this API does not expose a pagination cursor. Check the corresponding capability before using it.
+Vercel rollback returns pending activation; observe `getActivation`. Pages uses its own rollback
+endpoint and reports active on success. Neither rollback operation rebuilds the artifact.
+A delete pre-check is not atomic with concurrent activation: serialize these operations in your
+application. An ambiguous mutation still needs provider inspection before repetition.

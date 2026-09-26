@@ -40,5 +40,14 @@
   },
   "peerDependencies": {
     "effect": "4.0.0-rc.112"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/PolariseLabs/deploykit.git",
+    "directory": "packages/vercel"
+  },
+  "homepage": "https://github.com/PolariseLabs/deploykit#readme",
+  "bugs": {
+    "url": "https://github.com/PolariseLabs/deploykit/issues"
   }
 }

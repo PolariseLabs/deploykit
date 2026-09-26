@@ -1,0 +1,105 @@
+---
+title: Use Effect
+description: Integrate deployment with layers, typed errors, and your existing Effect runtime.
+---
+
+Use this path when your application already runs on Effect. Deploykit's Effect API
+is the implementation used by the Promise wrapper, not a second deployment engine.
+
+## Provide one service layer
+
+`Vercel.layerConfig()` reads provider credentials and builds a `Deploykit` service.
+`NodeFileSystem.layer` supplies file access. Neither provider chooses the runtime for you.
+
+Save this as `publish-effect.ts`. The complete module publishes the prepared tree from the [Vercel quickstart](/docs/guides/vercel):
+
+{/* example: examples/docs/effect.ts */}
+
+```ts
+import { Effect, Layer } from "effect"
+import { NodeFileSystem } from "@effect/platform-node"
+import { Deploykit, Platform, Provider } from "@deploykit/core"
+import * as Vercel from "@deploykit/vercel"
+
+export const publishEffect = <E>(input: {
+  appId: string
+  directory: string
+  operationId: string
+  recordCreated: (deployment: Provider.Deployment) => Effect.Effect<void, E>
+}) =>
+  Effect.gen(function* () {
+    const client = yield* Deploykit.Deploykit
+    const created = yield* client.deployDirectory(input.appId, input.directory, {
+      target: "production",
+      activation: "deferred",
+      operationId: input.operationId
+    })
+    yield* input.recordCreated(created)
+    const ready = yield* client.waitUntilReady(input.appId, created.id)
+    if (ready.status !== "deployed" || ready.url === undefined) {
+      return yield* new Provider.ValidationError({ message: ready.reason ?? "Deployment failed" })
+    }
+    yield* Platform.waitUntilServing(ready.url)
+    return ready
+  }).pipe(Effect.timeout("5 minutes"))
+
+export const VercelLive = Vercel.layerConfig().pipe(Layer.provide(NodeFileSystem.layer))
+```
+
+## Run the program
+
+```ts title="run-effect.ts"
+import { Effect } from "effect"
+import { publishEffect, VercelLive } from "./publish-effect.ts"
+
+const appId = process.env.VERCEL_PROJECT_ID
+if (!appId) throw new Error("Set VERCEL_PROJECT_ID")
+const program = publishEffect({
+  appId,
+  directory: "./site",
+  operationId: "your-persisted-publish-id",
+  recordCreated: deployment => Effect.logInfo("Persist this receipt", { deployment })
+})
+const receipt = await Effect.runPromise(program.pipe(Effect.provide(VercelLive)))
+console.log(receipt.url)
+```
+
+The logging callback makes this example runnable, but logs are not durable storage.
+Replace it with a database write that fails in your application's typed error channel.
+Persist the operation intent before running the program. Application verification goes after
+serving readiness and before the caller's separate activation step.
+
+## Understand the three type parameters
+
+`Effect<A, E, R>` describes the result, expected error and required services.
+Retrieving `Deploykit.Deploykit` adds that service to `R`. Providing `VercelLive` supplies it.
+The publish program remains lazy until the runtime executes it.
+
+Calling `Artifact.fromDirectory` separately still requires `FileSystem`. Use
+`Layer.provideMerge(NodeFileSystem.layer)` if the same layer must expose file access to callers;
+`Layer.provide` consumes that dependency while constructing the deployment service.
+
+## Handle an expected failure
+
+Use `Effect.catchTag("ProviderError", ...)` to inspect provider failures without catching
+defects or interruption. Preserve unknown create outcomes for [reconciliation](/docs/guides/recovery).
+If you catch an error only to log it, fail it again so a workflow cannot mark the publish successful.
+
+## Reuse the layer in a server
+
+```ts
+import { ManagedRuntime } from "effect"
+import { VercelLive } from "./publish-effect.ts"
+
+export const runtime = ManagedRuntime.make(VercelLive)
+```
+
+Call `runtime.runPromise(yourPublishEffect, { signal })` at your application's Promise boundary,
+and `runtime.dispose()` on shutdown. Concurrent publishes through that runtime share the layer's
+budgets. Separate `Effect.runPromise(program.pipe(Effect.provide(...)))` calls do not establish
+a process-wide shared runtime.
+
+The Promise package uses `runPromiseExit` internally to preserve original tagged errors.
+`Effect.tryPromise` goes in the other direction: it brings a Promise operation into Effect.
+
+See [service reference](/docs/reference/deploykit) and [exact core declarations](/docs/reference/api/core).

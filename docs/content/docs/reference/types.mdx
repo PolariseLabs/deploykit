@@ -1,0 +1,108 @@
+---
+title: Types
+description: The shapes deploykit returns.
+---
+
+With Effect, everything here is on `Provider` from `@deploykit/core`, and `Manifest` is on
+`Manifest`. The Promise package exports `Deployment`, `Access`, `Activation`, `Reconciliation`,
+`DeployProgress`, `Manifest` and `Artifact` as types.
+
+Ids are plain strings at runtime. In the Effect API, `Deployment` and `App` ids are branded
+(`AppId`, `DeploymentId`), so you can't mix them up by accident.
+
+## App
+
+```ts
+interface App {
+  id: string // the host's project id
+  name: string
+}
+```
+
+## Deployment
+
+```ts
+interface Deployment {
+  id: string
+  name: string
+  appId: string
+  status: "pending" | "deploying" | "deployed" | "failed"
+  url?: string // present once the host has assigned one
+  reason?: string // why it failed, when the host says
+}
+```
+
+`Provider.isTerminal(status)` is `true` for `deployed` and `failed`.
+
+## DeployProgress
+
+```ts
+type DeployProgress =
+  | { _tag: "Hashing"; done: number; total: number }
+  | { _tag: "Uploading"; done: number; total: number; bytes: number }
+  | { _tag: "Throttled"; retryAfterMs?: number }
+  | { _tag: "Created"; deploymentId: string }
+```
+
+## Capabilities
+
+```ts
+interface Capabilities {
+  deferredActivation: boolean
+  previewDeployments: boolean
+  reconciliation: boolean
+  adoptByName: boolean
+  listDeployments: boolean
+  deleteDeployment: boolean
+  rollback: boolean
+  accessModes: ReadonlySet<"public" | "password" | "sso">
+}
+```
+
+## Access
+
+```ts
+type Access = { _tag: "Public" } | { _tag: "Password"; password: string } | { _tag: "SingleSignOn" }
+```
+
+## Activation
+
+```ts
+interface Activation {
+  appId: string
+  deploymentId: string
+  state: "pending" | "active" | "unknown"
+}
+```
+
+## Reconciliation
+
+```ts
+type Reconciliation =
+  | { _tag: "Recovered"; deployment: Deployment }
+  | { _tag: "Unknown"; candidates: ReadonlyArray<string>; reason: string }
+```
+
+## Manifest
+
+```ts
+interface Manifest {
+  version: 1
+  entries: ReadonlyArray<{
+    path: string
+    byteLength: number
+    source: string
+    sha256: string
+    fingerprints?: ReadonlyArray<{
+      recipe: string
+      context: string
+      value: string
+    }>
+  }>
+}
+```
+
+## Telemetry event
+
+See [Telemetry](/docs/core/telemetry#events). Exported as `TelemetryEvent` from `@deploykit/node` and
+`Event` from `@deploykit/core/telemetry`.

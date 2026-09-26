@@ -1,0 +1,70 @@
+---
+title: Deploy from your backend
+description: Prepare files, deploy them, and keep control of your publishing workflow.
+---
+
+deploykit uploads prepared websites to Vercel or Cloudflare Pages. Use it in a script,
+a server, or a background worker. Your application decides what to publish, stores the result,
+and checks that the deployed application works.
+
+## Start here
+
+| Your goal                                          | Read next                                    |
+| -------------------------------------------------- | -------------------------------------------- |
+| Deploy a Vercel site from JavaScript or TypeScript | [Vercel quickstart](/docs/guides/vercel)     |
+| Deploy a Cloudflare Pages site                     | [Pages quickstart](/docs/guides/pages)       |
+| Use deploykit inside an Effect application         | [Effect integration](/docs/guides/effect)    |
+| Understand the API before integrating              | [API overview](/docs/reference)              |
+| Add deployment to an existing publishing system    | [Publishing workflow](/docs/guides/workflow) |
+
+[Install the alpha packages](/docs/installation) first, then follow the guide for your provider.
+
+## Choose an API
+
+|              | Promise                         | Effect                            |
+| ------------ | ------------------------------- | --------------------------------- |
+| Package      | `@deploykit/node`               | `@deploykit/core` plus an adapter |
+| Entry        | `createClient`                  | `Deploykit.Deploykit` service     |
+| Execution    | `await`                         | `yield*` in `Effect.gen`          |
+| Failure      | Original tagged error is thrown | Typed error channel               |
+| Cancellation | `AbortSignal`                   | Fiber interruption or timeout     |
+| Lifetime     | `close()` in `finally`          | Enclosing layer/runtime scope     |
+
+Both APIs use the same adapters. Choose Promise when the rest of your application uses
+`async`/`await`; choose Effect when you want deployment in your existing service graph.
+The transfer path runs on Node or Bun. [Control-plane imports](/docs/guides/workflow#the-control-plane)
+can run separately in lightweight coordinators.
+
+## Follow one publish
+
+1. **Prepare:** your build or composer produces a provider-compatible directory or manifest.
+2. **Create:** deploykit validates inputs, negotiates cached content, uploads missing bytes and returns a receipt.
+3. **Observe:** you persist the receipt and poll provider status with a deadline.
+4. **Verify:** you check serving availability and run your own application checks.
+5. **Activate:** on providers that support it, you explicitly switch the active deployment.
+
+Creation, provider readiness, HTTP serving and active routing are different facts.
+The guides keep these steps visible rather than hiding them in a single “publish succeeded” result.
+
+## Choose a provider
+
+| Capability                             | Vercel                                              | Cloudflare Pages                |
+| -------------------------------------- | --------------------------------------------------- | ------------------------------- |
+| Input                                  | Vercel Build Output tree                            | Website files at the root       |
+| Preview deployment                     | Yes                                                 | Yes, requires `previewBranch`   |
+| Create without activating production   | `activation: "deferred"`                            | Unsupported                     |
+| Explicit activation and reconciliation | Yes                                                 | Unsupported                     |
+| Access settings                        | Public, SSO, password; plan restrictions apply      | No SDK access-control operation |
+| Large file path                        | Staged streaming; default maximum 100,000,000 bytes | Static assets up to 25 MiB      |
+
+Switching adapters does not convert your artifact or grant another provider's capabilities.
+See [limits](/docs/core/limits) and the [provider references](/docs/reference/providers).
+
+## What stays in your application
+
+Your application owns artifact storage, snapshots, tenant authorization, database writes,
+workflow scheduling, generated configuration and application-specific checks. Convex and
+Vercel Fluid are one possible split, not requirements of deploykit.
+
+API version: `0.1.0-alpha.1`. Node 22.19 or newer; Effect integrations use exactly
+`4.0.0-rc.112`. See [troubleshooting](/docs/guides/troubleshooting) before diagnosing a publish.

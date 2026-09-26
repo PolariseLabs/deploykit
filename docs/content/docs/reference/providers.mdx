@@ -1,0 +1,86 @@
+---
+title: Provider options
+description: Configuration defaults and the capabilities each adapter actually implements.
+---
+
+## Shared client options
+
+Promise clients accept provider options plus `memoryBudgetBytes`, `stagingBudgetBytes`,
+`maxFileBytes` and `onEvent`. Effect adapter `layer(options)` accepts provider options plus the
+three limits; provide `Telemetry.Observer` separately for events.
+
+| Option               | Default             | Meaning                                                                            |
+| -------------------- | ------------------- | ---------------------------------------------------------------------------------- |
+| `memoryBudgetBytes`  | 256 MiB             | Shared transfer reservations per client/service                                    |
+| `stagingBudgetBytes` | 256 MiB             | Shared temporary-file reservations                                                 |
+| `maxFileBytes`       | 100,000,000         | Staging maximum; provider-specific smaller limits still apply                      |
+| `timeoutMs`          | 30000               | HTTP operation deadline including retry waits                                      |
+| `retry.attempts`     | 4                   | Ordinary transient retry budget, including first; short 429 waits may add attempts |
+| `retry.baseDelay`    | 250 ms              | Jittered exponential backoff when no server delay applies                          |
+| `fetch`              | Global fetch        | Offline test/custom transport boundary; honors abort signal                        |
+| `baseUrl`            | Provider API origin | Override for controlled transports                                                 |
+
+These limits do not cap total process RSS. Callers still own source allocations and
+cross-process concurrency. Creation and activation remain single-attempt regardless of `retry`.
+Safe operations can repeat short 429 waits within the HTTP deadline without consuming the
+ordinary attempt budget. `attempts: 1` disables these retries too.
+
+## Vercel
+
+`createClient` comes from `@deploykit/node/vercel`. Effect exports are in `@deploykit/vercel`.
+
+| Option           | Type / behavior                                                                                |
+| ---------------- | ---------------------------------------------------------------------------------------------- |
+| `token`          | Required string                                                                                |
+| `teamId`         | Optional string; selects the destination team                                                  |
+| `uploadThrottle` | `"conservative"`, `"balanced"`, `"fast"`, or `{ concurrency, intervalMs }`; omitted is unpaced |
+
+`layerConfig` reads `VERCEL_TOKEN` (or `VERCEL_API_KEY`) and optional `VERCEL_TEAM_ID`.
+
+| Per-deploy option   | Default      | Validation                                       |
+| ------------------- | ------------ | ------------------------------------------------ |
+| `uploadConcurrency` | 8            | Integer 1–32                                     |
+| `uploadOrder`       | `"manifest"` | `"manifest"` or `"largest-first"`                |
+| `uploadRounds`      | 3            | Integer 0–10; missing-content negotiation rounds |
+
+The Promise Vercel client exposes these options directly. The shared Effect service is typed
+against provider-neutral `DeployOptions`; use the Vercel adapter's lower-level provider/client
+contract when you need provider-specific per-deploy options. Throttling configuration belongs
+to the Vercel layer/client and is shared across its publishes.
+
+See [uploads](/docs/vercel/uploads), [activation](/docs/vercel/activation) and [access](/docs/vercel/access).
+Exact low-level HTTP interfaces are in the [Vercel API reference](/docs/reference/api/vercel).
+
+## Cloudflare Pages
+
+`createClient` comes from `@deploykit/node/cloudflare`. Effect exports are in `@deploykit/cloudflare`.
+
+| Option          | Type / behavior                                                                                         |
+| --------------- | ------------------------------------------------------------------------------------------------------- |
+| `apiToken`      | Required string                                                                                         |
+| `accountId`     | Required string                                                                                         |
+| `previewBranch` | Required when deploying to `target: "preview"`; must differ from the project’s actual production branch |
+
+`layerConfig` reads `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID`.
+Use `layer(options)` when setting branches or other explicit options.
+
+Pages does not support deferred activation, operation-ID reconciliation or SDK access settings.
+Check `getCapabilities()` (Promise) or `capabilities` (Effect) instead of assuming all methods
+are supported. Unsupported shared-service methods fail with `UnsupportedError`.
+See the [Pages API reference](/docs/reference/api/cloudflare) for the raw adapter contract.
+
+## Shared request coordination
+
+Both adapters accept an optional `gate` for caller-owned coordination between processes.
+The Promise API accepts `PromiseRequestGate`: `acquire(operation, signal)` waits for permission
+to send a request, and `backoff(delayMs)` receives a rate-limit delay. The Effect adapter accepts
+`Provider.RequestGate` with Effect-returning callbacks. The default gate does not wait.
+
+Deploykit does not supply the shared store or scheduling policy. Promise gate failures are
+ignored so requests can still proceed; this is not a strict distributed rate-limit guarantee.
+Honor cancellation in `acquire` and bound your store calls. See the
+[exact provider contracts](/docs/reference/api/core) for the callback signatures.
+
+Vercel's client also accepts default `uploadConcurrency`, `uploadOrder` and `uploadRounds`;
+per-deploy values override these defaults. Effect callers can set the same defaults on
+`Vercel.layer(options)` without changing the provider-neutral service type.

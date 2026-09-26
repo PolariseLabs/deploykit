@@ -1,0 +1,100 @@
+---
+title: Cloudflare Pages quickstart
+description: Publish a preview website and understand where Pages differs from Vercel.
+---
+
+Complete [installation](/docs/installation), then use an isolated Pages project. A Pages
+app ID is the project's name. Create it once through `client.createApp(name)` or the provider UI.
+
+## Prepare the website root
+
+```text
+site/
+  index.html
+  assets/
+    logo.png
+```
+
+`site/index.html` can contain `<h1>Hello from Pages</h1>`. Pass `site`, not a Vercel
+Build Output tree. Pages paths are relative to the website root.
+
+## Publish a preview
+
+Save the following as `publish-pages.ts`. The returned receipt identifies a preview
+deployment. A preview is not a production deployment waiting for activation.
+
+{/* example: examples/docs/pages.ts */}
+
+```ts
+import { waitUntilServing } from "@deploykit/node"
+import type { Deployment } from "@deploykit/node"
+import { createClient } from "@deploykit/node/cloudflare"
+import type { CloudflareOptions } from "@deploykit/node/cloudflare"
+
+export async function publishPages(
+  config: CloudflareOptions,
+  input: {
+    appId: string
+    directory: string
+    recordCreated: (deployment: Deployment) => Promise<void>
+    signal?: AbortSignal
+  }
+) {
+  const deadline = AbortSignal.timeout(5 * 60_000)
+  const signal = input.signal ? AbortSignal.any([input.signal, deadline]) : deadline
+  const client = createClient(config)
+  try {
+    const created = await client.deployDirectory(input.appId, input.directory, {
+      target: "preview",
+      signal
+    })
+    await input.recordCreated(created)
+    const ready = await client.waitUntilReady(input.appId, created.id, { signal })
+    if (ready.status !== "deployed" || ready.url === undefined) {
+      throw new Error(ready.reason ?? "Deployment failed")
+    }
+    await waitUntilServing(ready.url, { signal })
+    return ready
+  } finally {
+    await client.close()
+  }
+}
+```
+
+Call it from a script with the credentials and Pages project name from `.env`:
+
+```ts title="run-pages.ts"
+import { writeFile } from "node:fs/promises"
+import { publishPages } from "./publish-pages.ts"
+
+const apiToken = process.env.CLOUDFLARE_API_TOKEN
+const accountId = process.env.CLOUDFLARE_ACCOUNT_ID
+const appId = process.env.CLOUDFLARE_PROJECT_ID
+if (!apiToken || !accountId || !appId) throw new Error("Set the Cloudflare environment variables")
+const deployment = await publishPages(
+  { apiToken, accountId, previewBranch: "deploykit-preview" },
+  {
+    appId,
+    directory: "./site",
+    recordCreated: result => writeFile("pages-deployment.json", JSON.stringify(result))
+  }
+)
+console.log(deployment.url)
+```
+
+Run `node --env-file=.env run-pages.ts`. Expect a deployment receipt and a responding preview URL.
+
+## Moving to production
+
+For a production publish, deliberately change `target` to `"production"`. Pages can promote
+that deployment as part of creation. It does not support deploykit's deferred activation or
+operation-ID reconciliation capabilities. Do not add a fake staging/activation step around it.
+A lost production-create response requires provider inspection before creating again.
+
+## Worker and file limits
+
+Static files support up to 25 MiB per file. A single-module ESM `_worker.js` is supported,
+with an 8 MiB worker limit. Deploykit does not compile a `functions/` directory or resolve
+worker imports. See [Pages workers](/docs/cloudflare/workers) and [limits](/docs/core/limits).
+
+Read [provider options](/docs/reference/providers) for branches, account scoping and HTTP deadlines.

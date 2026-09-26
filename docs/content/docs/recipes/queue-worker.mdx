@@ -1,0 +1,77 @@
+---
+title: Coordinator and worker
+description: Connect the deployment boundary to your own queue and database.
+---
+
+Use a coordinator to persist intent and dispatch work, and a Node or Bun worker to transfer files.
+The queue, database, authentication and artifact store are supplied by your application.
+Convex and Vercel Fluid can fill these roles, but neither is required.
+
+## Send references, not bytes
+
+An application-owned job could look like this:
+
+```ts
+export interface DeployJob {
+  publishId: string
+  appId: string
+  artifactId: string
+  manifestKey: string
+  operationId: string
+}
+```
+
+The worker loads the manifest from authorized storage and resolves its opaque source references.
+Keep tokens and signed URLs out of the queue message. Validate the job against the stored
+publish intent before choosing credentials or a destination.
+
+## Coordinate through the control plane
+
+```ts
+import { makeVercelClient, makeVercelControl } from "@deploykit/vercel/control"
+
+export const createControl = (token: string, teamId: string) =>
+  makeVercelControl(makeVercelClient({ token, teamId }))
+```
+
+This exposes Effect operations for project/status/access/activation work without the transfer
+implementation. The control entry point is checked as a browser-compatible bundle; keep it
+on the trusted server because it uses provider credentials.
+
+Save the publish intent and schedule delivery using your database/queue's transaction or outbox
+mechanism. A database insert followed by an unrelated queue send is not an atomic operation.
+The [workflow guide](/docs/guides/workflow) explains which checkpoints belong to which process.
+
+## Run the transfer
+
+Use the complete [stored artifact example](/docs/guides/stored-artifacts) in the worker. For sustained
+workloads, move its client construction outside the function and reuse that client. This shares
+memory, staging and upload-throttling budgets across jobs. Close it during process shutdown.
+
+Save the deployment receipt before polling or checking. For Vercel, request production plus
+`activation: "deferred"` when verification must happen before activation. Pages has different
+activation semantics; do not assume changing the adapter preserves that behavior.
+
+## Decide how to acknowledge a job
+
+| Evidence                                               | Worker action                                                            |
+| ------------------------------------------------------ | ------------------------------------------------------------------------ |
+| Stored deployment ID                                   | Resume observation/checks of that deployment                             |
+| Validation or integrity failure                        | Record the failure and fix input                                         |
+| Unknown create outcome or interruption during creation | Hold for reconciliation; do not blindly redeliver creation               |
+| Explicit provider rejection                            | Inspect its code and recovery guidance before scheduling another attempt |
+| Verification failure                                   | Keep the receipt; investigate the existing deployment                    |
+| Success                                                | Persist the result before acknowledging delivery                         |
+
+A lease can prevent concurrent workers from processing the same intent, but lease expiry does
+not prove that a remote create failed. Operation IDs support discovery, not provider deduplication.
+See [recovery](/docs/guides/recovery) for the checked reconciliation example.
+
+## Transport failures between processes
+
+`Provider.encodeFailure` and `Provider.decodeFailure` preserve supported tagged SDK failures in
+versioned JSON. They do not serialize every possible application error, Effect defect or
+interruption. Use your own envelope to distinguish those outcomes.
+
+Keep detailed failure records in access-controlled storage. Forward allowlisted structured fields
+to [telemetry](/docs/core/telemetry), and keep queue acknowledgement independent of telemetry delivery.

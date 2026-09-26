@@ -1,0 +1,126 @@
+---
+title: Lifecycle and cancelling
+description: Starting and closing a client, and stopping work part-way.
+---
+
+import { Tab, Tabs } from "fumadocs-ui/components/tabs"
+
+## One client per process
+
+Create one client (Promise) or provide one layer (Effect) and share it. It holds:
+
+- the HTTP client, including any [upload throttle](/docs/vercel/uploads#across-deploys),
+- the memory and disk [budgets](/docs/core/limits#memory-and-disk) that every deploy through it shares.
+
+Two clients don't share budgets or throttles, so creating one per request defeats both.
+
+## Closing
+
+<Tabs groupId="api" items={["Effect", "Promise"]} persist>
+<Tab value="Promise">
+
+```ts
+const deploykit = createClient({ token })
+// ...
+await deploykit.close()
+```
+
+Or let a block close it:
+
+```ts
+{
+  await using deploykit = createClient({ token })
+  await deploykit.deployDirectory(appId, "./build")
+} // closed here
+```
+
+`close()`:
+
+1. Cancels every call still running on the client. They reject with `AbortError`.
+2. Waits for them to finish cleaning up, including temporary files.
+3. Releases the client's resources.
+
+Calling `close()` again returns the same promise. Calls made after it reject with
+`ClientClosedError`.
+
+</Tab>
+<Tab value="Effect">
+
+The layer's resources live as long as the scope that provides it. With `Effect.provide` on a
+single program, that's the program. For a long-running service, build it once with a
+`ManagedRuntime` or at the top of your app's layer graph, not per request.
+
+```ts
+import { Layer, ManagedRuntime } from "effect"
+import { NodeFileSystem } from "@effect/platform-node"
+import * as Vercel from "@deploykit/vercel"
+
+const runtime = ManagedRuntime.make(Vercel.layerConfig().pipe(Layer.provide(NodeFileSystem.layer)))
+// ...
+await runtime.dispose()
+```
+
+</Tab>
+</Tabs>
+
+## Cancelling a call
+
+<Tabs groupId="api" items={["Effect", "Promise"]} persist>
+<Tab value="Promise">
+
+Every method takes `{ signal }` as its last argument (deploy methods take it inside the options).
+
+```ts
+import { AbortError } from "@deploykit/node"
+
+const controller = new AbortController()
+setTimeout(() => controller.abort(), 60_000)
+
+try {
+  await deploykit.deployDirectory(appId, "./build", {
+    signal: controller.signal
+  })
+} catch (error) {
+  if (error instanceof AbortError) console.log("cancelled")
+  else throw error
+}
+```
+
+A signal that's **already aborted** rejects immediately with `AbortError`, before any request is
+sent.
+
+</Tab>
+<Tab value="Effect">
+
+Interrupt the fiber. Timeouts, `Effect.race` and scope closure all do this.
+
+```ts
+import { Effect } from "effect"
+
+const bounded = publish.pipe(Effect.timeout("10 minutes"))
+```
+
+</Tab>
+</Tabs>
+
+## What cancelling does
+
+- Stops reading files and closes their streams.
+- Stops uploads that are in progress.
+- Releases memory and disk reservations and deletes temporary files.
+
+What it can't do: undo a request the host already accepted. If you cancel during the create step,
+the deployment may exist anyway. Treat it like an [unknown outcome](/docs/core/errors#unknown-outcomes).
+
+## Persist before and after
+
+Cancellation, crashes and lost responses all have the same answer: write down what you're about to
+do, and what you got back.
+
+1. Before `deploy`: save the attempt, and its `operationId` on Vercel.
+2. After `deploy`: save the deployment id immediately, before waiting or checking.
+3. On restart: look for attempts with no deployment id and
+   [reconcile](/docs/vercel/activation#recovering-a-lost-response) them.
+
+`onProgress` isn't a substitute for step 2. It can be cut off, and an interrupted call may never
+return its result.

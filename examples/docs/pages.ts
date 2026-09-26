@@ -1,4 +1,3 @@
-import { setTimeout as delay } from "node:timers/promises"
 import { waitUntilServing } from "@deploykit/node"
 import type { Deployment } from "@deploykit/node"
 import { createClient } from "@deploykit/node/cloudflare"
@@ -22,11 +21,7 @@ export async function publishPages(
       signal
     })
     await input.recordCreated(created)
-    let ready = created
-    while (ready.status === "pending" || ready.status === "deploying") {
-      await delay(1000, undefined, { signal })
-      ready = await client.getDeployment(input.appId, created.id, { signal })
-    }
+    const ready = await client.waitUntilReady(input.appId, created.id, { signal })
     if (ready.status !== "deployed" || ready.url === undefined) {
       throw new Error(ready.reason ?? "Deployment failed")
     }

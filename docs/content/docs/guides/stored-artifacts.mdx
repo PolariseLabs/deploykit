@@ -1,0 +1,105 @@
+---
+title: Deploy from artifact storage
+description: Send a JSON manifest to a worker and open replayable streams on demand.
+---
+
+Use this when composition happens in one process and deployment happens in another.
+The manifest crosses the boundary; live streams and filesystem paths do not.
+
+## 1. Persist the bytes, then the manifest
+
+Finish composition and save an immutable set of bytes in storage you control.
+Use `manifestFromDirectory(directory, { source })` to compute sizes and SHA-256 hashes
+without collecting entire files. The `source` callback assigns opaque identifiers;
+it does not upload anything or create storage objects.
+
+```ts
+import { manifestFromDirectory } from "@deploykit/node"
+
+let sequence = 0
+const references = new Map<string, string>()
+const manifest = await manifestFromDirectory("./site", {
+  source: path => {
+    const reference = `artifact:publish-42:${sequence++}`
+    references.set(reference, path)
+    return reference
+  }
+})
+```
+
+Persist the reference-to-object mapping alongside your artifact. Simple generated references
+also work for filenames containing spaces or Unicode. References must match the manifest's
+restricted character set and cannot contain a URL scheme or credentials.
+
+Manifest construction reads and hashes every file. Reuse the stored manifest for unchanged
+publishes. Optional provider fingerprints can avoid a later provider hashing pass; SHA-256
+alone is not a Vercel SHA-1 fingerprint.
+
+## 2. Pass the manifest to the worker
+
+Queue an application-owned envelope containing `appId`, `operationId`, `manifest` and a
+publish-attempt ID. Validate its tenant ownership before resolving credentials or storage.
+Keep tokens and expiring signed URLs out of the persisted manifest.
+
+## 3. Open a fresh source each time
+
+{/* example: examples/docs/http-source.ts */}
+
+```ts
+import { createClient } from "@deploykit/node/vercel"
+import type { VercelOptions } from "@deploykit/node/vercel"
+
+export async function deployStoredArtifact(
+  config: VercelOptions,
+  input: {
+    appId: string
+    operationId: string
+    manifest: unknown
+    resolveSource: (reference: string, signal: AbortSignal) => Promise<URL>
+    signal: AbortSignal
+  }
+) {
+  const client = createClient(config)
+  try {
+    return await client.deployManifest(
+      input.appId,
+      input.manifest,
+      async (reference, signal) => {
+        const url = await input.resolveSource(reference, signal)
+        const response = await fetch(url, { signal, redirect: "error" })
+        if (!response.ok || response.body === null) {
+          await response.body?.cancel()
+          throw new Error(`Artifact store returned ${response.status}`)
+        }
+        return response.body
+      },
+      {
+        target: "production",
+        activation: "deferred",
+        operationId: input.operationId,
+        signal: input.signal
+      }
+    )
+  } finally {
+    await client.close()
+  }
+}
+```
+
+`resolveSource` is your authorized lookup from an opaque reference to a current storage URL.
+Do not interpret an arbitrary manifest reference as a URL to fetch. Use an allowed storage
+origin and follow your application's authorization rules. Deploykit validates generic file
+metadata and integrity, not access to your storage.
+
+The reader must return a fresh stream every time. Hashing, cache eviction and safe upload
+retries may reopen the source. The supplied abort signal must reach the storage request.
+A reader rejection becomes a typed `SourceError`; changed, truncated or oversized bytes fail
+integrity checks. Do not return `arrayBuffer()` for large content.
+
+## Cache behavior
+
+The provider decides what it already has. Unchanged content can avoid source reads when the
+manifest supplies usable provider fingerprints. An evicted file must be replayable even if
+it was uploaded successfully before. Do not treat cache presence as durable artifact storage.
+
+Continue with [coordinator and worker](/docs/guides/workflow) and [manifest reference](/docs/reference/files).

@@ -1,0 +1,459 @@
+@import "fumapress/css/default.css";
+
+/* Geist and Geist Pixel, SIL Open Font License, from the `geist` package. */
+@font-face {
+  font-family: "Geist";
+  src: url("/fonts/Geist-Variable.woff2") format("woff2");
+  font-weight: 100 900;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Geist Mono";
+  src: url("/fonts/GeistMono-Variable.woff2") format("woff2");
+  font-weight: 100 900;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Geist Pixel";
+  src: url("/fonts/GeistPixel-Grid.woff2") format("woff2");
+  font-display: block;
+}
+
+.wordmark {
+  font-family: "Geist Pixel", monospace;
+  font-weight: 400;
+  line-height: 1;
+}
+
+/* Landing page. Always dark, true black. Animations play once, then stop. */
+.landing {
+  --bg: #000;
+  --fg: #fff;
+  --dim: #8a8a8a;
+  --faint: #262626;
+  --amber: #f5a524;
+  --rule: #222;
+  min-height: 100vh;
+  background: var(--bg);
+  color: var(--fg);
+  font:
+    15px/1.55 "Geist",
+    system-ui,
+    sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+.landing pre,
+.landing code {
+  font-family: "Geist Mono", ui-monospace, monospace;
+  font-size: 13px;
+}
+.landing .k {
+  color: #fff;
+}
+.landing .s {
+  color: #a3a3a3;
+}
+.landing .c {
+  color: #5c5c5c;
+}
+.landing .page {
+  max-width: 960px;
+  margin: 0 auto;
+  padding: 0 24px;
+}
+.landing .hero {
+  padding: 112px 0 48px;
+}
+.landing .hero .wordmark {
+  font-size: clamp(56px, 12vw, 136px);
+}
+.landing .hero p {
+  max-width: 600px;
+  margin-top: 24px;
+  font-size: 20px;
+  line-height: 1.45;
+}
+.landing .hero p span {
+  color: var(--dim);
+}
+.landing .row {
+  display: flex;
+  gap: 12px;
+  margin-top: 32px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.landing .btn {
+  display: inline-block;
+  padding: 9px 16px;
+  background: var(--fg);
+  color: var(--bg);
+  font-weight: 500;
+  font-size: 14px;
+}
+.landing .install {
+  display: inline-flex;
+  align-items: stretch;
+  border: 1px solid #333;
+  font-size: 14px;
+}
+.landing .install code {
+  padding: 9px 14px;
+  font-size: 14px;
+}
+.landing .install button {
+  display: grid;
+  place-items: center;
+  width: 38px;
+  border-left: 1px solid #333;
+  color: var(--dim);
+  cursor: pointer;
+  transition: color 0.2s;
+}
+.landing .install button.copied {
+  color: #34d399;
+}
+.landing .install button svg {
+  animation: status-in 0.25s ease both;
+}
+.landing .install button:hover {
+  color: var(--fg);
+}
+
+/* Demo: code on the left, files on the right, pipeline underneath. */
+.landing .demo {
+  border: 1px solid var(--rule);
+}
+.landing .demo-bar {
+  display: flex;
+  justify-content: space-between;
+  padding: 9px 16px;
+  border-bottom: 1px solid var(--rule);
+  font:
+    12px "Geist Mono",
+    monospace;
+  color: var(--dim);
+}
+.landing .demo-bar button {
+  color: var(--dim);
+  cursor: pointer;
+}
+.landing .demo-bar button:hover {
+  color: var(--fg);
+}
+.landing .demo-body {
+  display: grid;
+  grid-template-columns: 1.35fr 1fr;
+}
+.landing .demo-code {
+  padding: 24px 0;
+  overflow-x: auto;
+  border-right: 1px solid var(--rule);
+  line-height: 2;
+}
+.landing .demo-code .line {
+  padding: 0 20px;
+  border-left: 2px solid transparent;
+  opacity: 0.45;
+  transition:
+    opacity 0.3s,
+    border-color 0.3s;
+}
+.landing .demo-code .line.active {
+  opacity: 1;
+  border-left-color: var(--fg);
+}
+.landing .demo-visual {
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 18px;
+}
+.landing .cells {
+  display: grid;
+  gap: 3px;
+}
+.landing .cell {
+  aspect-ratio: 1;
+  background: var(--fg);
+  opacity: 0.08;
+  transition:
+    opacity 0.35s,
+    background 0.35s,
+    transform 0.6s cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+.landing .cell.read {
+  opacity: 0.35;
+}
+.landing .cell.hashed {
+  opacity: 1;
+}
+.landing .cell.stored {
+  opacity: 1;
+  background: var(--faint);
+}
+.landing .cell.failed {
+  opacity: 1;
+  background: var(--amber);
+  box-shadow: 0 0 6px color-mix(in srgb, var(--amber) 70%, transparent);
+}
+.landing .cell.sent {
+  opacity: 0;
+  transform: translateX(48px);
+}
+.landing .demo-status {
+  font:
+    12px "Geist Mono",
+    monospace;
+  color: var(--dim);
+  min-height: 18px;
+}
+.landing .demo-status.live {
+  color: var(--fg);
+}
+.landing .demo-status span {
+  display: inline-block;
+  animation: status-in 0.35s cubic-bezier(0.2, 0.7, 0.2, 1) both;
+}
+.landing .demo-status.warn {
+  color: var(--amber);
+}
+.landing .demo-status.live span {
+  color: var(--mint, #34d399);
+}
+@keyframes status-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+}
+.landing .stages {
+  position: relative;
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  list-style: none;
+  padding: 20px 0 18px;
+  border-top: 1px solid var(--rule);
+}
+.landing .stages::before,
+.landing .stages-fill {
+  content: "";
+  position: absolute;
+  left: 10%;
+  top: 32px; /* the middle of a 24px loader below 20px of padding */
+  height: 1px;
+}
+.landing .stages-fill.warn {
+  background: linear-gradient(90deg, #34d39966, var(--amber));
+}
+.landing .stage.warn b,
+.landing .stage.warn .stage-detail {
+  color: var(--amber);
+}
+.landing .stages::before {
+  right: 10%;
+  background: #2a2a2a;
+}
+.landing .stages-fill {
+  background: linear-gradient(90deg, #34d39966, #34d399);
+  /* Eases both ways, so slipping back and recovering both read as deliberate. */
+  transition:
+    width 0.7s cubic-bezier(0.65, 0, 0.35, 1),
+    background 0.4s ease;
+}
+.landing .stage {
+  position: relative;
+  text-align: center;
+}
+.landing .stage b {
+  display: block;
+  margin-top: 10px;
+  font-size: 13px;
+  font-weight: 500;
+  color: #555;
+  transition: color 0.3s;
+}
+.landing .stage-detail {
+  display: block;
+  font:
+    11px "Geist Mono",
+    monospace;
+  color: var(--dim);
+  opacity: 0;
+  transition: opacity 0.3s;
+}
+.landing .stage.on b {
+  color: var(--fg);
+}
+.landing .stage.on .stage-detail {
+  opacity: 1;
+}
+
+.landing .facts {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 28px 32px;
+  padding: 56px 0;
+  border-bottom: 1px solid var(--rule);
+}
+.landing .facts b {
+  display: block;
+  font-weight: 500;
+  margin-bottom: 4px;
+}
+.landing .facts span {
+  color: var(--dim);
+  font-size: 14px;
+}
+.landing .section {
+  padding: 56px 0 112px;
+}
+.landing h2 {
+  font-size: 26px;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  margin-bottom: 20px;
+}
+.landing .examples {
+  border: 1px solid var(--rule);
+}
+.landing .tabs {
+  display: flex;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+  border-bottom: 1px solid var(--rule);
+}
+.landing .tabs::-webkit-scrollbar {
+  display: none;
+}
+.landing .tabs button {
+  padding: 10px 16px;
+  font-size: 13px;
+  color: var(--dim);
+  border-right: 1px solid var(--rule);
+  white-space: nowrap;
+  cursor: pointer;
+}
+.landing .tabs button[aria-selected="true"] {
+  color: var(--fg);
+  box-shadow: inset 0 -1px 0 var(--fg);
+}
+.landing .examples pre {
+  padding: 22px 20px;
+  overflow-x: auto;
+  line-height: 1.75;
+  min-height: 230px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .landing * {
+    transition: none !important;
+  }
+}
+@media (max-width: 760px) {
+  .landing .page,
+  .landing .demo-body {
+    grid-template-columns: 1fr;
+  }
+  .landing .demo-code {
+    border-right: 0;
+    border-bottom: 1px solid var(--rule);
+  }
+  .landing .stage b {
+    font-size: 11px;
+  }
+  .landing .stage-detail {
+    display: none;
+  }
+  .landing .facts {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* Dot Matrix stages: dim grid, then a looping loader, then a tick that ripples in. */
+.landing .dot-matrix {
+  --mint: #34d399;
+  position: relative;
+  z-index: 1;
+  display: block;
+  width: 24px;
+  height: 24px;
+  margin: 0 auto;
+  box-shadow: 0 0 0 6px var(--bg);
+  background: var(--bg);
+}
+.landing .dm-layer {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  transition: opacity 0.3s ease;
+}
+.landing .dm-idle,
+.landing .dm-done {
+  grid-template-columns: repeat(5, 4px);
+  grid-template-rows: repeat(5, 4px);
+  gap: 1px;
+  place-content: center;
+}
+.landing .dm-idle i,
+.landing .dm-done i {
+  display: block;
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--fg);
+}
+.landing .dm-idle i {
+  opacity: 0.14;
+}
+
+/* Only the running stage shows its loader. */
+.landing .dot-matrix .dm-loader,
+.landing .dot-matrix .dm-done {
+  opacity: 0;
+}
+.landing .dot-matrix.active .dm-idle,
+.landing .dot-matrix.done .dm-idle {
+  opacity: 0;
+}
+.landing .dot-matrix.active .dm-loader {
+  opacity: 1;
+  animation: dm-in 0.3s ease both;
+}
+@keyframes dm-in {
+  from {
+    opacity: 0;
+  }
+}
+
+/* Finishing: each dot springs in on its own delay, so the tick draws itself. */
+.landing .dm-done i {
+  opacity: 0;
+  transform: scale(0.2);
+  transition:
+    opacity 0.25s ease,
+    transform 0.25s ease;
+}
+.landing .dot-matrix.done .dm-done {
+  opacity: 1;
+}
+.landing .dot-matrix.done .dm-done i {
+  opacity: 0.16;
+  transform: scale(1);
+  transition:
+    opacity 0.35s ease var(--delay),
+    transform 0.45s cubic-bezier(0.34, 1.56, 0.64, 1) var(--delay);
+}
+.landing .dot-matrix.done .dm-done i.lit {
+  opacity: 1;
+  background: var(--mint);
+  box-shadow: 0 0 6px color-mix(in srgb, var(--mint) 70%, transparent);
+}
+@media (prefers-reduced-motion: reduce) {
+  .landing .dot-matrix .dm-done i {
+    transition: none !important;
+  }
+}

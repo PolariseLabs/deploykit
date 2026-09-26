@@ -51,5 +51,14 @@
   "publishConfig": {
     "access": "public",
     "tag": "alpha"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/PolariseLabs/deploykit.git",
+    "directory": "packages/node"
+  },
+  "homepage": "https://github.com/PolariseLabs/deploykit#readme",
+  "bugs": {
+    "url": "https://github.com/PolariseLabs/deploykit/issues"
   }
 }

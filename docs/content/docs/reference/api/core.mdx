@@ -1,0 +1,1697 @@
+---
+title: "@deploykit/core"
+description: "Complete generated public declarations for @deploykit/core."
+---
+
+This reference is generated from the built package. Start with the [guides](/docs) for working examples and the [API overview](/docs/reference) for task-oriented reference.
+
+## Import paths
+
+Only the import paths below are public. Supporting declaration modules describe the types reachable through those exports; their filenames are not additional public import paths.
+
+| Import                             | Declaration module     |
+| ---------------------------------- | ---------------------- |
+| `@deploykit/core`                  | `index.d.ts`           |
+| `@deploykit/core/provider`         | `provider/index.d.ts`  |
+| `@deploykit/core/platform`         | `platform/index.d.ts`  |
+| `@deploykit/core/artifact`         | `artifact/index.d.ts`  |
+| `@deploykit/core/entry`            | `artifact/entry.d.ts`  |
+| `@deploykit/core/manifest`         | `manifest.d.ts`        |
+| `@deploykit/core/source`           | `source.d.ts`          |
+| `@deploykit/core/transfer`         | `transfer.d.ts`        |
+| `@deploykit/core/http`             | `provider/http.d.ts`   |
+| `@deploykit/core/staging`          | `staging.d.ts`         |
+| `@deploykit/core/telemetry`        | `telemetry.d.ts`       |
+| `@deploykit/core/manifest-builder` | `manifestBuilder.d.ts` |
+| `@deploykit/core/deploykit`        | `deploykit.d.ts`       |
+
+## index.d.ts
+
+```ts
+export * as Artifact from "./artifact/index.js"
+export * as Entry from "./artifact/entry.js"
+export * as Path from "./artifact/path.js"
+export * as Provider from "./provider/index.js"
+export * as Platform from "./platform/index.js"
+export * as Manifest from "./manifest.js"
+export * as Source from "./source.js"
+export * as Deploykit from "./deploykit.js"
+```
+
+## artifact/index.d.ts
+
+```ts
+export * from "./artifact.js"
+export * from "./layered.js"
+export * from "./size.js"
+export * from "./fromDirectory.js"
+```
+
+## artifact/artifact.d.ts
+
+```ts
+import { Schema, Effect, Option } from "effect"
+import { type ArtifactPath } from "./path.js"
+import { type Entry } from "./entry.js"
+declare const DuplicatePathError_base: Schema.Class<
+  DuplicatePathError,
+  Schema.TaggedStruct<
+    "DuplicatePathError",
+    {
+      readonly path: Schema.String
+    }
+  >,
+  import("effect/Cause").YieldableError
+>
+export declare class DuplicatePathError extends DuplicatePathError_base {}
+export interface Artifact {
+  readonly entries: ReadonlyMap<ArtifactPath, Entry>
+}
+export declare const empty: Artifact
+/** Copies rather than mutates, so one base artifact stays reusable across tenants. */
+export declare const add: (
+  artifact: Artifact,
+  entry: Entry
+) => Effect.Effect<
+  {
+    entries: Map<string & import("effect/Brand").Brand<"ArtifactPath">, Entry>
+  },
+  DuplicatePathError,
+  never
+>
+/** Folds entries into one artifact, failing on the first duplicate. */
+export declare const make: (entries: ReadonlyArray<Entry>) => Effect.Effect<
+  {
+    entries: Map<string & import("effect/Brand").Brand<"ArtifactPath">, Entry>
+  },
+  DuplicatePathError,
+  never
+>
+export declare const has: (
+  artifact: Artifact,
+  path: string
+) => Effect.Effect<boolean, import("./path.js").InvalidArtifactPathError, never>
+/** Absence is an answer, not a failure: the Option covers it, the error channel covers a bad path. */
+export declare const get: (
+  artifact: Artifact,
+  path: string
+) => Effect.Effect<Option.Option<Entry>, import("./path.js").InvalidArtifactPathError, never>
+/** Insertion order, which adapters rely on when hashing and uploading. */
+export declare const list: (artifact: Artifact) => ReadonlyArray<Entry>
+export declare const fileCount: (artifact: Artifact) => number
+export {}
+```
+
+## artifact/path.d.ts
+
+```ts
+import { Schema, Effect } from "effect"
+export declare const ArtifactPathSchema: Schema.brand<Schema.String, "ArtifactPath">
+export type ArtifactPath = typeof ArtifactPathSchema.Type
+declare const InvalidArtifactPathError_base: Schema.Class<
+  InvalidArtifactPathError,
+  Schema.TaggedStruct<
+    "InvalidArtifactPathError",
+    {
+      readonly path: Schema.String
+      readonly reason: Schema.String
+    }
+  >,
+  import("effect/Cause").YieldableError
+>
+export declare class InvalidArtifactPathError extends InvalidArtifactPathError_base {}
+/**
+ * Turns caller input into a destination path that is portable across operating
+ * systems and providers. Cosmetic noise is repaired because it cannot change
+ * which file was meant; anything ambiguous or unportable is rejected.
+ */
+export declare const normalise: (
+  input: string
+) => Effect.Effect<ArtifactPath, InvalidArtifactPathError>
+export interface ExactOptions {
+  /**
+   * Require the path to sit under this prefix, itself given canonically.
+   * A deploy tree usually has a root (`.vercel/output` for Vercel), and a file
+   * outside it is a producer mistake rather than something to relocate.
+   */
+  readonly root?: string
+}
+/**
+ * Accept a path only if it is already exactly what will be written.
+ *
+ * `normalise` repairs: it trims, applies NFC, rewrites backslashes and drops
+ * `.` and empty segments. That is convenient when the path and the thing that
+ * refers to it are produced together, and dangerous when they are not. A
+ * config that says `./assets/x.png` while the file is written as
+ * `assets/x.png` resolves against the current route and 404s, and the repair
+ * is what hid the mismatch.
+ *
+ * So this rejects instead, for producers that compute references separately
+ * and need the path they asked for to be the path they get. Same rules, no
+ * silent fixes: the producer should emit the path it means.
+ *
+ * Use `normalise` for input a human typed. Use this for a path some other part
+ * of your system is going to point at.
+ */
+export declare const exact: (
+  input: string,
+  options?: ExactOptions
+) => Effect.Effect<ArtifactPath, InvalidArtifactPathError>
+export {}
+```
+
+## artifact/entry.d.ts
+
+```ts
+import type { Stream } from "effect"
+import type { SourceError } from "../provider/errors.js"
+import { Schema, Effect, FileSystem } from "effect"
+import type { ArtifactPath } from "./path.js"
+declare const TextEntry_base: Schema.Class<
+  TextEntry,
+  Schema.TaggedStruct<
+    "Text",
+    {
+      readonly path: Schema.brand<Schema.String, "ArtifactPath">
+      readonly content: Schema.String
+    }
+  >,
+  {}
+>
+export declare class TextEntry extends TextEntry_base {}
+declare const BytesEntry_base: Schema.Class<
+  BytesEntry,
+  Schema.TaggedStruct<
+    "Bytes",
+    {
+      readonly path: Schema.brand<Schema.String, "ArtifactPath">
+      readonly content: Schema.Uint8Array
+    }
+  >,
+  {}
+>
+export declare class BytesEntry extends BytesEntry_base {}
+declare const FileEntry_base: Schema.Class<
+  FileEntry,
+  Schema.TaggedStruct<
+    "File",
+    {
+      readonly path: Schema.brand<Schema.String, "ArtifactPath">
+      readonly source: Schema.String
+      readonly byteLength: Schema.Number
+    }
+  >,
+  {}
+>
+export declare class FileEntry extends FileEntry_base {}
+export interface DeferredEntry {
+  readonly _tag: "Deferred"
+  readonly path: ArtifactPath
+  readonly byteLength: number
+  readonly read: (signal?: AbortSignal) => Promise<Uint8Array>
+  readonly digests?: Readonly<Record<string, string>>
+}
+export interface SourceEntry {
+  readonly _tag: "Source"
+  readonly path: ArtifactPath
+  readonly byteLength: number
+  readonly sha256: string
+  readonly fingerprints: ReadonlyArray<{
+    readonly recipe: string
+    readonly context: string
+    readonly value: string
+  }>
+  readonly open: () => Stream.Stream<Uint8Array, SourceError>
+}
+export type Entry = TextEntry | BytesEntry | FileEntry | DeferredEntry | SourceEntry
+export declare const text: (
+  path: string,
+  content: string
+) => Effect.Effect<TextEntry, import("./path.js").InvalidArtifactPathError, never>
+export declare const bytes: (
+  path: string,
+  content: Uint8Array
+) => Effect.Effect<BytesEntry, import("./path.js").InvalidArtifactPathError, never>
+/** Reads the size now, so nothing has to read it again. */
+export declare const file: (
+  path: string,
+  source: string
+) => Effect.Effect<
+  FileEntry,
+  import("./path.js").InvalidArtifactPathError | import("effect/PlatformError").PlatformError,
+  FileSystem.FileSystem
+>
+export declare const fileWithSize: (
+  path: string,
+  source: string,
+  byteLength: number
+) => Effect.Effect<FileEntry, import("./path.js").InvalidArtifactPathError, never>
+export declare const describe: (entry: Entry) => string
+export declare const deferred: (
+  path: string,
+  options: {
+    readonly byteLength: number
+    readonly read: (signal?: AbortSignal) => Promise<Uint8Array>
+    readonly digests?: Readonly<Record<string, string>>
+  }
+) => Effect.Effect<DeferredEntry, import("./path.js").InvalidArtifactPathError, never>
+/** True when the bytes are already in hand, so reading them costs nothing. */
+export declare const isResident: (entry: Entry) => boolean
+export {}
+```
+
+## provider/errors.d.ts
+
+```ts
+/** Failures a calling SaaS can reason about. Adapters map their raw HTTP and SDK errors into these. */
+import { Schema } from "effect"
+declare const UploadError_base: Schema.Class<
+  UploadError,
+  Schema.TaggedStruct<
+    "UploadError",
+    {
+      readonly message: Schema.String
+    }
+  >,
+  import("effect/Cause").YieldableError
+>
+export declare class UploadError extends UploadError_base {}
+declare const ProviderError_base: Schema.Class<
+  ProviderError,
+  Schema.TaggedStruct<
+    "ProviderError",
+    {
+      readonly message: Schema.String
+      readonly provider: Schema.String
+      readonly operation: Schema.optional<Schema.String>
+      readonly requestId: Schema.optional<Schema.String>
+      readonly code: Schema.optional<Schema.String>
+      readonly outcome: Schema.optional<
+        Schema.Literals<readonly ["rejected", "unknown", "observation-failed"]>
+      >
+      readonly recovery: Schema.optional<
+        Schema.Literals<readonly ["retry", "reconcile", "fix-input"]>
+      >
+      readonly appId: Schema.optional<Schema.String>
+      readonly appName: Schema.optional<Schema.String>
+      readonly deploymentId: Schema.optional<Schema.String>
+      /** HTTP status, when the failure came from a response rather than the wire. */
+      readonly statusCode: Schema.optional<Schema.Number>
+      /** Allowlisted provider diagnostics; never raw response text. */
+      readonly body: Schema.optional<Schema.String>
+      /** Milliseconds the provider asked us to wait, from Retry-After. */
+      readonly retryAfterMs: Schema.optional<Schema.Number>
+      /** The adapter knows this is worth retrying even if the status does not say so. */
+      readonly transient: Schema.optional<Schema.Boolean>
+    }
+  >,
+  import("effect/Cause").YieldableError
+>
+export declare class ProviderError extends ProviderError_base {}
+declare const ValidationError_base: Schema.Class<
+  ValidationError,
+  Schema.TaggedStruct<
+    "ValidationError",
+    {
+      readonly message: Schema.String
+    }
+  >,
+  import("effect/Cause").YieldableError
+>
+export declare class ValidationError extends ValidationError_base {}
+declare const SourceError_base: Schema.Class<
+  SourceError,
+  Schema.TaggedStruct<
+    "SourceError",
+    {
+      readonly reference: Schema.String
+      readonly message: Schema.String
+    }
+  >,
+  import("effect/Cause").YieldableError
+>
+export declare class SourceError extends SourceError_base {}
+declare const IntegrityError_base: Schema.Class<
+  IntegrityError,
+  Schema.TaggedStruct<
+    "IntegrityError",
+    {
+      readonly path: Schema.String
+      readonly message: Schema.String
+    }
+  >,
+  import("effect/Cause").YieldableError
+>
+export declare class IntegrityError extends IntegrityError_base {}
+declare const TransferLimitError_base: Schema.Class<
+  TransferLimitError,
+  Schema.TaggedStruct<
+    "TransferLimitError",
+    {
+      readonly message: Schema.String
+    }
+  >,
+  import("effect/Cause").YieldableError
+>
+export declare class TransferLimitError extends TransferLimitError_base {}
+export type TransferError = SourceError | IntegrityError | TransferLimitError | ValidationError
+export {}
+```
+
+## artifact/layered.d.ts
+
+```ts
+/**
+ * Composing an artifact from an ordered stack of layers.
+ *
+ * A deploy tree is usually not authored in one place. A prebuilt template
+ * arrives from a CDN, generated config is written on top, collected assets on
+ * top of that, and a user upload may deliberately shadow a file the template
+ * shipped. Flattening all of that with a plain merge works, and throws away
+ * the two things you want when a file turns out to be wrong: where it came
+ * from, and what it replaced.
+ *
+ * So later layers still win, exactly as a merge would, but every override is
+ * recorded in the result rather than logged and forgotten. Which overrides are
+ * legitimate is the caller's policy, not a rule stated here: a user upload
+ * shadowing a bundle file is intended, two producers inside one layer claiming
+ * the same path usually is not, and only the caller knows which is which.
+ */
+import type { Entry } from "./entry.js"
+import type { ArtifactPath } from "./path.js"
+import type { Artifact } from "./artifact.js"
+export interface ArtifactLayer {
+  /** How this layer is named in overrides and summaries. */
+  readonly name: string
+  readonly entries: ReadonlyArray<Entry>
+}
+/** One file that displaced another at the same path. */
+export interface Override {
+  readonly path: ArtifactPath
+  /** The layer whose entry survived. */
+  readonly winner: string
+  /**
+   * The layer whose entry it replaced. Equal to `winner` when two producers
+   * inside a single layer claimed the same path, which is the case worth
+   * looking at hardest.
+   */
+  readonly replaced: string
+}
+export interface LayeredArtifact {
+  readonly artifact: Artifact
+  /** Every displacement, in the order it happened. */
+  readonly overrides: ReadonlyArray<Override>
+  /** Which layer supplied the surviving entry at a path. */
+  readonly layerOf: (path: ArtifactPath) => string | undefined
+}
+/**
+ * Stack layers into one artifact, later layers winning.
+ *
+ * Builds a single Map rather than folding immutable adds, so composing a
+ * course-sized tree stays linear.
+ */
+export declare const layered: (layers: ReadonlyArray<ArtifactLayer>) => LayeredArtifact
+/**
+ * Overrides where a layer displaced itself: two producers inside it claimed
+ * the same path.
+ *
+ * Separated out because it is the one collision that is nearly always a
+ * mistake, and because it is invisible in a flat merge.
+ */
+export declare const collisionsWithinLayers: (result: LayeredArtifact) => ReadonlyArray<Override>
+export interface LayerSummary {
+  readonly name: string
+  /** Entries this layer supplied, including ones later displaced. */
+  readonly contributed: number
+  /** Entries from this layer still present in the result. */
+  readonly surviving: number
+}
+/**
+ * Per-layer counts, for a deploy that can say what it is made of: how much came
+ * from the template untouched, how much was generated, how much was overridden.
+ */
+export declare const summarise: (
+  layers: ReadonlyArray<ArtifactLayer>,
+  result: LayeredArtifact
+) => ReadonlyArray<LayerSummary>
+```
+
+## artifact/size.d.ts
+
+```ts
+import { type Entry } from "./entry.js"
+import { type Artifact } from "./artifact.js"
+export declare const sizeOf: (entry: Entry) => number
+export declare const totalSize: (artifact: Artifact) => number
+```
+
+## artifact/fromDirectory.d.ts
+
+```ts
+import { Effect, FileSystem } from "effect"
+/**
+ * Builds an Artifact from every file under `root`, recursively.
+ *
+ * Destination paths are relative to `root`; sources stay as given so bytes are
+ * read at upload time. Nothing is filtered, including dotfiles: deciding what
+ * belongs in a deployment is the caller's policy. `stat` follows symlinks, so a
+ * link out of `root` resolves to its target.
+ */
+export declare const fromDirectory: (root: string) => Effect.Effect<
+  {
+    entries: Map<string & import("effect/Brand").Brand<"ArtifactPath">, import("./entry.js").Entry>
+  },
+  | import("./path.ts").InvalidArtifactPathError
+  | import("effect/PlatformError").PlatformError
+  | import("./artifact.js").DuplicatePathError,
+  FileSystem.FileSystem
+>
+```
+
+## provider/index.d.ts
+
+```ts
+export * from "./errors.js"
+export * from "./capabilities.js"
+export * from "./retry.js"
+export * from "./provider.js"
+export * from "./failure.js"
+export * from "./recovery.js"
+export * from "./gate.js"
+```
+
+## provider/capabilities.d.ts
+
+```ts
+/** What a provider can actually do, so optional features are declared rather than silently emulated. */
+import type { ControlPlane } from "./provider.ts"
+/** How a provider can restrict who may open a deployment. */
+export type AccessMode = "public" | "password" | "sso"
+export interface Capabilities {
+  readonly deferredActivation: boolean
+  readonly previewDeployments: boolean
+  readonly reconciliation: boolean
+  readonly adoptByName: boolean
+  readonly listDeployments: boolean
+  readonly deleteDeployment: boolean
+  readonly rollback: boolean
+  readonly accessModes: ReadonlySet<AccessMode>
+}
+export declare const capabilitiesOf: (provider: ControlPlane) => Capabilities
+```
+
+## provider/provider.d.ts
+
+```ts
+/** The adapter contract. Declared here, implemented by @deploykit/vercel and @deploykit/test. */
+import type { Option } from "effect"
+import type { AccessMode } from "./capabilities.js"
+import { Context, Effect, Layer, Schema } from "effect"
+import type { StagingBudget } from "../staging.js"
+import type { TransferBudget } from "../transfer.js"
+import type { TransferError, ProviderError } from "./errors.js"
+import type { Artifact } from "../artifact/index.js"
+export declare const appId: Schema.brand<Schema.String, "AppId">
+export declare const appName: Schema.brand<Schema.String, "AppName">
+export declare const deploymentId: Schema.brand<Schema.String, "DeploymentId">
+export declare const deploymentName: Schema.brand<Schema.String, "DeploymentName">
+export declare const deploymentStatus: Schema.Union<
+  readonly [
+    Schema.Literal<"pending">,
+    Schema.Literal<"deploying">,
+    Schema.Literal<"deployed">,
+    Schema.Literal<"failed">
+  ]
+>
+export type DeploymentStatus = typeof deploymentStatus.Type
+export declare const isTerminal: (status: DeploymentStatus) => boolean
+export declare const deploymentUrl: Schema.brand<Schema.String, "DeploymentUrl">
+export type DeploymentUrl = typeof deploymentUrl.Type
+export type AppId = typeof appId.Type
+declare const UnsupportedError_base: Schema.Class<
+  UnsupportedError,
+  Schema.TaggedStruct<
+    "UnsupportedError",
+    {
+      readonly provider: Schema.String
+      /** The operation or mode that is not available. */
+      readonly capability: Schema.String
+      readonly message: Schema.String
+    }
+  >,
+  import("effect/Cause").YieldableError
+>
+export declare class UnsupportedError extends UnsupportedError_base {}
+export type Access =
+  | {
+      readonly _tag: "Public"
+    }
+  | {
+      readonly _tag: "Password"
+      readonly password: string
+    }
+  | {
+      readonly _tag: "SingleSignOn"
+    }
+declare const App_base: Schema.Class<
+  App,
+  Schema.Struct<{
+    readonly id: Schema.brand<Schema.String, "AppId">
+    readonly name: Schema.brand<Schema.String, "AppName">
+  }>,
+  {}
+>
+export declare class App extends App_base {}
+declare const Deployment_base: Schema.Class<
+  Deployment,
+  Schema.Struct<{
+    readonly id: Schema.brand<Schema.String, "DeploymentId">
+    readonly name: Schema.brand<Schema.String, "DeploymentName">
+    readonly appId: Schema.brand<Schema.String, "AppId">
+    readonly status: Schema.Union<
+      readonly [
+        Schema.Literal<"pending">,
+        Schema.Literal<"deploying">,
+        Schema.Literal<"deployed">,
+        Schema.Literal<"failed">
+      ]
+    >
+    readonly url: Schema.optional<Schema.brand<Schema.String, "DeploymentUrl">>
+    /** Why a failed deployment failed, when the provider says. */
+    readonly reason: Schema.optional<Schema.String>
+  }>,
+  {}
+>
+export declare class Deployment extends Deployment_base {}
+export declare const Activation: Schema.Struct<{
+  readonly appId: Schema.String
+  readonly deploymentId: Schema.String
+  readonly state: Schema.Literals<readonly ["pending", "active", "unknown"]>
+}>
+export type Activation = typeof Activation.Type
+export type Reconciliation =
+  | {
+      readonly _tag: "Recovered"
+      readonly deployment: Deployment
+    }
+  | {
+      readonly _tag: "Unknown"
+      readonly candidates: ReadonlyArray<string>
+      readonly reason: string
+    }
+export interface ControlPlane {
+  readonly deferredActivation?: boolean
+  readonly previewDeployments?: boolean
+  readonly reconcileDeployment?: (
+    appId: string,
+    operationId: string
+  ) => Effect.Effect<Reconciliation, ProviderError>
+  readonly activateDeployment?: (
+    appId: string,
+    deploymentId: string
+  ) => Effect.Effect<Activation, ProviderError | UnsupportedError>
+  readonly getActivation?: (
+    appId: string,
+    deploymentId: string
+  ) => Effect.Effect<Activation, ProviderError>
+  readonly name: string
+  /** Create an isolated app for one tenant. */
+  readonly createApp: (name: string) => Effect.Effect<App, ProviderError>
+  /** Resolve an app that already exists. */
+  readonly getApp: (id: string) => Effect.Effect<App, ProviderError>
+  readonly findAppByName?: (name: string) => Effect.Effect<Option.Option<App>, ProviderError>
+  readonly setAccess?: (id: string, access: Access) => Effect.Effect<void, ProviderError>
+  /** Which modes `setAccess` accepts. Absent when `setAccess` is. */
+  readonly accessModes?: ReadonlySet<AccessMode>
+  readonly deleteApp: (id: string) => Effect.Effect<void, ProviderError>
+  readonly getDeployment: (
+    appId: string,
+    deploymentId: string
+  ) => Effect.Effect<Deployment, ProviderError>
+  /** One page of an app's deployments, newest first. */
+  readonly listDeployments?: (
+    appId: string,
+    options?: ListDeploymentsOptions
+  ) => Effect.Effect<ReadonlyArray<Deployment>, ProviderError>
+  /** Delete one deployment. Refuses the one currently serving production. */
+  readonly deleteDeployment?: (
+    appId: string,
+    deploymentId: string
+  ) => Effect.Effect<void, ProviderError | UnsupportedError>
+  /**
+   * Point production back at an earlier successful production deployment,
+   * without rebuilding. Pick the target with `listDeployments`.
+   */
+  readonly rollback?: (
+    appId: string,
+    deploymentId: string
+  ) => Effect.Effect<Activation, ProviderError | UnsupportedError>
+}
+export interface ListDeploymentsOptions {
+  readonly target?: "production" | "preview"
+  /** Clamped to 1 to 100. Defaults to 20. */
+  readonly limit?: number
+}
+/** The page size adapters request for `listDeployments`. */
+export declare const listLimit: ({ limit }?: ListDeploymentsOptions) => number
+export type DeployProgress =
+  | {
+      readonly _tag: "Hashing"
+      readonly done: number
+      readonly total: number
+    }
+  | {
+      readonly _tag: "Uploading"
+      readonly done: number
+      readonly total: number
+      readonly bytes: number
+    }
+  | {
+      readonly _tag: "Throttled"
+      readonly retryAfterMs?: number
+    }
+  | {
+      readonly _tag: "Created"
+      readonly deploymentId: string
+    }
+export interface DeployOptions {
+  readonly transferBudget?: TransferBudget
+  readonly stagingBudget?: StagingBudget
+  readonly activation?: "automatic" | "deferred"
+  readonly operationId?: string
+  readonly target?: "production" | "preview"
+  readonly meta?: Readonly<Record<string, string>>
+  /** Called as the deploy progresses. Failures here must not fail the deploy. */
+  readonly onProgress?: (event: DeployProgress) => Effect.Effect<void>
+}
+/** The control plane plus the one operation that moves bytes. */
+export interface Provider extends ControlPlane {
+  /** Put an artifact into an app. */
+  readonly deploy: (
+    appId: string,
+    artifact: Artifact,
+    options?: DeployOptions
+  ) => Effect.Effect<Deployment, ProviderError | TransferError | UnsupportedError>
+}
+declare const DeploymentProvider_base: Context.ServiceClass<
+  DeploymentProvider,
+  "@deploykit/DeploymentProvider",
+  Provider
+>
+export declare class DeploymentProvider extends DeploymentProvider_base {}
+declare const DeploymentControl_base: Context.ServiceClass<
+  DeploymentControl,
+  "@deploykit/DeploymentControl",
+  ControlPlane
+>
+export declare class DeploymentControl extends DeploymentControl_base {}
+/** Every full provider is also a control plane. */
+export declare const controlLayer: Layer.Layer<DeploymentControl, never, DeploymentProvider>
+export {}
+```
+
+## staging.d.ts
+
+```ts
+import { Effect, Stream } from "effect"
+import type { FileSystem, Scope } from "effect"
+import type { Entry } from "./artifact/entry.js"
+import { IntegrityError, SourceError, TransferLimitError } from "./provider/errors.js"
+export interface StagedFile {
+  readonly path: string
+  readonly byteLength: number
+  readonly sha256: string
+  readonly sha1: string
+}
+export interface StagingBudget {
+  readonly capacity: number
+  readonly maxFileBytes: number
+  readonly reserve: (bytes: number) => Effect.Effect<void, TransferLimitError, Scope.Scope>
+}
+/** Reserve disk space until the enclosing file scope closes. */
+export declare const makeStagingBudget: (
+  capacity?: number,
+  maxFileBytes?: number
+) => Effect.Effect<StagingBudget, TransferLimitError, never>
+/** The scope owns both the temporary file and its disk reservation. */
+export declare const stageEntry: (
+  fs: FileSystem.FileSystem,
+  entry: Entry,
+  budget: StagingBudget
+) => Effect.Effect<
+  {
+    path: string
+    byteLength: number
+    sha256: string
+    sha1: string
+  },
+  | import("./provider/errors.js").ValidationError
+  | SourceError
+  | IntegrityError
+  | TransferLimitError,
+  Scope.Scope
+>
+/** Interrupt the producer on scope exit even if fetch still holds the Web stream lock. */
+export declare const openStreamBody: <E>(
+  stream: Stream.Stream<Uint8Array, E>
+) => Effect.Effect<ReadableStream<Uint8Array<ArrayBufferLike>>, never, Scope.Scope>
+export declare const openStagedBody: (
+  fs: FileSystem.FileSystem,
+  path: string
+) => Effect.Effect<ReadableStream<Uint8Array<ArrayBufferLike>>, never, Scope.Scope>
+```
+
+## transfer.d.ts
+
+```ts
+import { Effect, Stream } from "effect"
+import type { FileSystem } from "effect"
+import type { Entry } from "./artifact/entry.js"
+import {
+  IntegrityError,
+  SourceError,
+  TransferLimitError,
+  ValidationError
+} from "./provider/errors.js"
+/** Reservations cover buffers and encoding while the request is in flight. */
+export interface TransferBudget {
+  readonly capacity: number
+  readonly maxFileBytes: number
+  readonly use: <A, E, R>(
+    bytes: number,
+    effect: Effect.Effect<A, E, R>
+  ) => Effect.Effect<A, E | TransferLimitError, R>
+}
+export declare const makeBudget: (
+  capacity?: number,
+  maxFileBytes?: number
+) => Effect.Effect<TransferBudget, TransferLimitError, never>
+/** Conservative supported buffered path, including base64/JSON/hash temporaries. */
+export declare const reservation: (entry: Entry) => number
+export declare const validateEntries: (
+  entries: ReadonlyArray<Entry>,
+  maxFileBytes: number
+) => Effect.Effect<undefined, ValidationError | TransferLimitError, never>
+export declare const validate: (
+  entries: ReadonlyArray<Entry>,
+  budget: TransferBudget
+) => Effect.Effect<void, ValidationError | TransferLimitError, never>
+/** Open each entry as a lazy byte stream. */
+export declare const openEntry: (
+  fs: FileSystem.FileSystem,
+  entry: Entry
+) => Stream.Stream<Uint8Array<ArrayBufferLike>, SourceError, never>
+export declare const withBytes: <A, E, R>(
+  budget: TransferBudget,
+  fs: FileSystem.FileSystem,
+  entry: Entry,
+  use: (bytes: Uint8Array) => Effect.Effect<A, E, R>
+) => Effect.Effect<A, ValidationError | SourceError | IntegrityError | TransferLimitError | E, R>
+export declare const fingerprint: (
+  entry: Entry,
+  recipe: string,
+  context: string,
+  legacyKey: string
+) => string | undefined
+export declare const checkFingerprint: (
+  path: string,
+  expected: string,
+  actual: string
+) => Effect.Effect<void, never, never> | Effect.Effect<never, IntegrityError, never>
+```
+
+## provider/retry.d.ts
+
+```ts
+/** Retries require repeatable operations or explicit rejection evidence. */
+import { Duration, Effect, Schedule } from "effect"
+export interface RetryableFailure {
+  readonly statusCode?: number | undefined
+  readonly retryAfterMs?: number | undefined
+  readonly transient?: boolean | undefined
+  readonly rejected?: boolean | undefined
+}
+export declare const isTransient: (error: RetryableFailure) => boolean
+export declare const isThrottle: (error: RetryableFailure) => boolean
+export interface RetryOptions {
+  /** Total attempts including the first. Defaults to 4. */
+  readonly attempts?: number
+  /** First backoff step; doubles from there. Defaults to 250ms. */
+  readonly baseDelay?: Duration.Input
+}
+export declare const backoff: (
+  options?: RetryOptions
+) => Schedule.Schedule<Duration.Duration, RetryableFailure, never, never>
+/**
+ * Retries idempotent calls on transient failures, up to `attempts`.
+ *
+ * A short 429 does not use up an attempt: the provider has said it did nothing
+ * and when to come back, so giving up early would fail a deploy for no reason.
+ * Those retries are bounded by the deadline adapters put around every request
+ * (`timeoutMs`). `attempts: 1` still means no retries at all.
+ */
+export declare const retryIdempotent: (
+  options?: RetryOptions
+) => <A, E extends RetryableFailure, R>(effect: Effect.Effect<A, E, R>) => Effect.Effect<A, E, R>
+export declare const retryThrottleOnly: (
+  options?: RetryOptions
+) => <A, E extends RetryableFailure, R>(effect: Effect.Effect<A, E, R>) => Effect.Effect<A, E, R>
+```
+
+## provider/failure.d.ts
+
+```ts
+import { Effect, Schema } from "effect"
+import {
+  ProviderError,
+  SourceError,
+  IntegrityError,
+  TransferLimitError,
+  ValidationError,
+  UploadError
+} from "./errors.js"
+import { UnsupportedError } from "./provider.js"
+export declare const Failure: Schema.Union<
+  readonly [
+    typeof ProviderError,
+    typeof SourceError,
+    typeof IntegrityError,
+    typeof TransferLimitError,
+    typeof ValidationError,
+    typeof UnsupportedError,
+    typeof UploadError
+  ]
+>
+export type Failure = typeof Failure.Type
+export declare const WireFailure: Schema.Struct<{
+  readonly version: Schema.Literal<1>
+  readonly error: Schema.Union<
+    readonly [
+      typeof ProviderError,
+      typeof SourceError,
+      typeof IntegrityError,
+      typeof TransferLimitError,
+      typeof ValidationError,
+      typeof UnsupportedError,
+      typeof UploadError
+    ]
+  >
+}>
+export declare const encodeFailure: (
+  error: Failure
+) => Effect.Effect<string, ValidationError, never>
+export declare const decodeFailure: (
+  json: string
+) => Effect.Effect<
+  | UploadError
+  | ProviderError
+  | ValidationError
+  | SourceError
+  | IntegrityError
+  | TransferLimitError
+  | UnsupportedError,
+  ValidationError,
+  never
+>
+```
+
+## provider/recovery.d.ts
+
+```ts
+import type { DeploymentFailedError, DeploymentTimeoutError } from "../platform/errors.js"
+import type { Failure } from "./failure.js"
+/**
+ * What a caller should do next about a failure.
+ *
+ * - `retry`: nothing was created; running the same call again is safe.
+ * - `reconcile`: the provider may have acted; look it up (`reconcileDeployment`) before retrying.
+ * - `wait`: still in progress; keep polling the same deployment.
+ * - `fix-input`: the request or content is wrong; retrying unchanged fails again.
+ * - `unsupported`: this provider cannot do it; check `capabilities` before offering it.
+ */
+export type Recovery = "retry" | "reconcile" | "wait" | "fix-input" | "unsupported"
+export type RecoverableError = Failure | DeploymentFailedError | DeploymentTimeoutError
+export declare const recoveryOf: (error: RecoverableError) => Recovery
+```
+
+## platform/errors.d.ts
+
+```ts
+import { Schema } from "effect"
+declare const AppStoreError_base: Schema.Class<
+  AppStoreError,
+  Schema.TaggedStruct<
+    "AppStoreError",
+    {
+      readonly message: Schema.String
+      readonly externalId: Schema.optional<Schema.String>
+    }
+  >,
+  import("effect/Cause").YieldableError
+>
+export declare class AppStoreError extends AppStoreError_base {}
+declare const DeploymentTimeoutError_base: Schema.Class<
+  DeploymentTimeoutError,
+  Schema.TaggedStruct<
+    "DeploymentTimeoutError",
+    {
+      readonly deploymentId: Schema.String
+      readonly lastStatus: Schema.Union<
+        readonly [
+          Schema.Literal<"pending">,
+          Schema.Literal<"deploying">,
+          Schema.Literal<"deployed">,
+          Schema.Literal<"failed">
+        ]
+      >
+    }
+  >,
+  import("effect/Cause").YieldableError
+>
+/**
+ * A deployment was still moving when we stopped waiting. Not a provider
+ * failure: the provider is fine, the build is just slow. Carries the last
+ * status seen so a caller can decide whether to keep waiting or give up.
+ */
+export declare class DeploymentTimeoutError extends DeploymentTimeoutError_base {}
+declare const DeploymentFailedError_base: Schema.Class<
+  DeploymentFailedError,
+  Schema.TaggedStruct<
+    "DeploymentFailedError",
+    {
+      readonly deploymentId: Schema.String
+      /** The provider's reason, when it gives one. */
+      readonly reason: Schema.optional<Schema.String>
+    }
+  >,
+  import("effect/Cause").YieldableError
+>
+/** The provider finished the deployment and reports it failed, e.g. a rejected build. */
+export declare class DeploymentFailedError extends DeploymentFailedError_base {}
+export {}
+```
+
+## provider/gate.d.ts
+
+```ts
+import { Effect } from "effect"
+/**
+ * Coordinates request rate across every process that shares one provider token.
+ *
+ * Provider rate limits are per token, not per process, so a fleet of workers
+ * can only stay under them together. Back this with a shared store (Redis,
+ * a database, a Durable Object). Within one process the adapters already pace
+ * themselves; a gate is only needed once several processes deploy at once.
+ */
+export interface RequestGate {
+  /** Resolves when this request may be sent. */
+  readonly acquire: (operation: string) => Effect.Effect<void>
+  /** The provider rate-limited us; every process should hold off this long. */
+  readonly backoff: (delayMs: number) => Effect.Effect<void>
+}
+export declare const openGate: RequestGate
+/** A gate written with Promises, for callers not using Effect. */
+export interface PromiseRequestGate {
+  readonly acquire: (operation: string, signal: AbortSignal) => Promise<void>
+  readonly backoff: (delayMs: number) => Promise<void>
+}
+/**
+ * Adapts a Promise gate. It fails open: if the shared store is down, requests
+ * still go out and the provider's own 429s remain the backstop.
+ */
+export declare const fromPromiseGate: (gate: PromiseRequestGate) => RequestGate
+```
+
+## platform/index.d.ts
+
+```ts
+export * from "./appStore.ts"
+export * from "./errors.ts"
+export * from "./serving.ts"
+export * from "./platform.ts"
+export * from "./wait.ts"
+```
+
+## platform/appStore.d.ts
+
+```ts
+import type { Effect, Option } from "effect"
+import { Context } from "effect"
+import type { AppId } from "../provider/provider.ts"
+import type { AppStoreError } from "./errors.ts"
+/**
+ * What a write found. A conflict is an outcome, not a failure: losing a race is
+ * ordinary under concurrency, and the winner's id is the useful part.
+ */
+export type PutOutcome =
+  | {
+      readonly _tag: "Stored"
+    }
+  | {
+      readonly _tag: "AlreadyRecorded"
+      readonly appId: AppId
+    }
+export interface AppStore {
+  /** The provider app id recorded for this tenant, if we have ever created one. */
+  readonly get: (externalId: string) => Effect.Effect<Option.Option<AppId>, AppStoreError>
+  /**
+   * Record the mapping if, and only if, nothing is recorded yet.
+   *
+   * Must be atomic: back it with a unique constraint or a conditional write.
+   * deploykit cannot make two systems atomic, but your database can already do
+   * this for one key, so the contract asks for it rather than pretending.
+   */
+  readonly put: (externalId: string, appId: AppId) => Effect.Effect<PutOutcome, AppStoreError>
+  /**
+   * Drop a tenant's mapping, when its app has been deleted.
+   *
+   * Forgetting one that is not there is not an error: offboarding is often
+   * retried, and the second attempt should be quiet.
+   */
+  readonly forget: (externalId: string) => Effect.Effect<void, AppStoreError>
+}
+declare const TenantAppStore_base: Context.ServiceClass<
+  TenantAppStore,
+  "@deploykit/AppStore",
+  AppStore
+>
+export declare class TenantAppStore extends TenantAppStore_base {}
+export {}
+```
+
+## platform/serving.d.ts
+
+```ts
+/** Poll serving readiness separately from provider status and activation. */
+import { Effect, Schedule, Schema } from "effect"
+declare const NotServingError_base: Schema.Class<
+  NotServingError,
+  Schema.TaggedStruct<
+    "NotServingError",
+    {
+      readonly url: Schema.String
+      /** The last status seen, or absent if the request never got an answer. */
+      readonly status: Schema.optional<Schema.Number>
+      readonly waitedMs: Schema.Number
+    }
+  >,
+  import("effect/Cause").YieldableError
+>
+export declare class NotServingError extends NotServingError_base {}
+export interface ServingOptions {
+  /** Defaults to accepting 2xx responses. */
+  readonly accept?: (status: number) => boolean
+  /** Poll spacing and optional attempt limit; the overall deadline still applies. */
+  readonly schedule?: Schedule.Schedule<unknown>
+  /** Overall deadline, including requests and cleanup; defaults to 60,000 ms. */
+  readonly timeoutMs?: number
+  /** Custom transports must honour the supplied abort signal. */
+  readonly fetch?: typeof globalThis.fetch
+}
+/** Poll without following redirects, which could otherwise mistake a login page for success. */
+export declare const waitUntilServing: (
+  url: string,
+  options?: ServingOptions
+) => Effect.Effect<number, NotServingError>
+export {}
+```
+
+## platform/platform.d.ts
+
+```ts
+import { Context, Effect, Layer } from "effect"
+import {
+  DeploymentProvider,
+  UnsupportedError,
+  type Access,
+  type DeployOptions as ProviderDeployOptions,
+  type App,
+  type Deployment
+} from "../provider/provider.ts"
+import { type Capabilities } from "../provider/capabilities.ts"
+import type { TransferError, ProviderError } from "../provider/errors.ts"
+import type { AppStoreError, DeploymentTimeoutError } from "./errors.ts"
+import { TenantAppStore } from "./appStore.ts"
+import { type WaitOptions } from "./wait.ts"
+import type { Artifact } from "../artifact/index.ts"
+export interface GetOrCreateOptions {
+  readonly externalId: string
+  readonly name: string
+}
+export interface DeleteAppOptions {
+  /** The tenant whose mapping should be forgotten along with the app. */
+  readonly externalId: string
+  readonly appId: string
+}
+export interface DeployOptions extends ProviderDeployOptions {
+  readonly artifact: Artifact
+}
+export interface PlatformApi {
+  /** What the wired-up provider can do, for a caller deciding what to offer. */
+  readonly capabilities: Capabilities
+  readonly apps: {
+    readonly getOrCreate: (
+      options: GetOrCreateOptions
+    ) => Effect.Effect<App, ProviderError | AppStoreError>
+    /** Resolve an app deploykit already knows about. */
+    readonly get: (id: string) => Effect.Effect<App, ProviderError>
+    readonly delete: (
+      options: DeleteAppOptions
+    ) => Effect.Effect<void, ProviderError | AppStoreError>
+    readonly setAccess?: (
+      id: string,
+      access: Access
+    ) => Effect.Effect<void, ProviderError | UnsupportedError>
+  }
+  readonly deploy: (
+    app: App,
+    options: DeployOptions
+  ) => Effect.Effect<Deployment, ProviderError | TransferError | UnsupportedError>
+  readonly deployments: {
+    readonly get: (appId: string, deploymentId: string) => Effect.Effect<Deployment, ProviderError>
+    readonly waitUntilReady: (
+      appId: string,
+      deploymentId: string,
+      options?: WaitOptions
+    ) => Effect.Effect<Deployment, ProviderError | DeploymentTimeoutError>
+  }
+}
+declare const Platform_base: Context.ServiceClass<Platform, "@deploykit/Platform", PlatformApi>
+/** A minute of one-second polls: slow enough to be polite, bounded so it ends. */
+export declare class Platform extends Platform_base {}
+export declare const layer: Layer.Layer<Platform, never, DeploymentProvider | TenantAppStore>
+export {}
+```
+
+## platform/wait.d.ts
+
+```ts
+import { Effect, Schedule } from "effect"
+import { type ControlPlane } from "../provider/provider.ts"
+import { DeploymentTimeoutError as TimeoutError } from "./errors.ts"
+export interface WaitOptions {
+  /** How often to ask, and for how long. Must be bounded. */
+  readonly schedule?: Schedule.Schedule<unknown>
+  readonly tolerateFailures?: number
+}
+/**
+ * Poll until the deployment reaches a terminal status. A `failed` deployment is
+ * returned, not raised: it is an answer, and the caller decides what it means.
+ */
+export declare const waitUntilReady: (
+  provider: Pick<ControlPlane, "getDeployment">,
+  appId: string,
+  id: string,
+  options?: WaitOptions
+) => Effect.Effect<
+  import("../provider/provider.ts").Deployment,
+  import("../provider/errors.ts").ProviderError | TimeoutError,
+  never
+>
+```
+
+## manifest.d.ts
+
+```ts
+import { Effect, Schema } from "effect"
+import type { FileSource } from "./source.js"
+import { ValidationError } from "./provider/errors.js"
+export declare const Fingerprint: Schema.Struct<{
+  readonly recipe: Schema.String
+  readonly context: Schema.String
+  readonly value: Schema.String
+}>
+export declare const ManifestEntry: Schema.Struct<{
+  readonly path: Schema.String
+  readonly byteLength: Schema.Number
+  readonly source: Schema.String
+  readonly sha256: Schema.String
+  readonly fingerprints: Schema.optional<
+    Schema.$Array<
+      Schema.Struct<{
+        readonly recipe: Schema.String
+        readonly context: Schema.String
+        readonly value: Schema.String
+      }>
+    >
+  >
+}>
+export declare const Manifest: Schema.Struct<{
+  readonly version: Schema.Literal<1>
+  readonly entries: Schema.$Array<
+    Schema.Struct<{
+      readonly path: Schema.String
+      readonly byteLength: Schema.Number
+      readonly source: Schema.String
+      readonly sha256: Schema.String
+      readonly fingerprints: Schema.optional<
+        Schema.$Array<
+          Schema.Struct<{
+            readonly recipe: Schema.String
+            readonly context: Schema.String
+            readonly value: Schema.String
+          }>
+        >
+      >
+    }>
+  >
+}>
+export type Manifest = typeof Manifest.Type
+/** Validates and canonicalizes untrusted data before attaching any source. */
+export declare const decode: (input: unknown) => Effect.Effect<
+  {
+    version: 1
+    entries: {
+      fingerprints?: {
+        recipe: string
+        context: string
+        value: string
+      }[]
+      path: string & import("effect/Brand").Brand<"ArtifactPath">
+      byteLength: number
+      source: string
+      sha256: string
+    }[]
+  },
+  ValidationError,
+  never
+>
+/** Envelope identity includes source references and cached fingerprint metadata. */
+export declare const encode: (input: unknown) => Effect.Effect<string, ValidationError, never>
+export declare const fromJson: (json: string) => Effect.Effect<
+  {
+    version: 1
+    entries: {
+      fingerprints?: {
+        recipe: string
+        context: string
+        value: string
+      }[]
+      path: string & import("effect/Brand").Brand<"ArtifactPath">
+      byteLength: number
+      source: string
+      sha256: string
+    }[]
+  },
+  ValidationError,
+  never
+>
+export declare const toArtifact: (
+  input: unknown,
+  source: FileSource
+) => Effect.Effect<
+  {
+    entries: Map<
+      string & import("effect/Brand").Brand<"ArtifactPath">,
+      import("./artifact/entry.js").Entry
+    >
+  },
+  ValidationError | import("./artifact/artifact.js").DuplicatePathError,
+  never
+>
+```
+
+## source.d.ts
+
+```ts
+import { Stream } from "effect"
+import { SourceError } from "./provider/errors.js"
+/** Open a fresh scoped stream on every run. References contain no credentials. */
+export interface FileSource {
+  readonly open: (reference: string) => Stream.Stream<Uint8Array, SourceError>
+}
+/** Convenience boundary for small, bounded promise readers. */
+export declare const fromPromise: (
+  read: (reference: string, signal: AbortSignal) => Promise<Uint8Array>
+) => FileSource
+export type StreamReader = (
+  reference: string,
+  signal: AbortSignal
+) => Promise<ReadableStream<Uint8Array>>
+/** Opens a fresh Web stream and aborts its reader when the Effect stream closes. */
+export declare const fromReadableStream: (read: StreamReader) => FileSource
+```
+
+## deploykit.d.ts
+
+```ts
+/** The Effect entry point: a provider plus the budgets every deploy shares. */
+import { Context, Effect, FileSystem, Layer } from "effect"
+import * as Artifact from "./artifact/index.js"
+import { DeploymentFailedError } from "./platform/errors.js"
+import { type WaitOptions } from "./platform/wait.js"
+import * as Provider from "./provider/index.js"
+import type { FileSource } from "./source.js"
+/** Per-deploy options. Budgets are owned by the layer, so callers cannot pass their own. */
+export type DeployOptions = Omit<Provider.DeployOptions, "transferBudget" | "stagingBudget">
+export interface DeployAndWaitOptions extends DeployOptions {
+  readonly wait?: WaitOptions
+}
+export interface Limits {
+  /** Bytes all concurrent deploys may hold in memory at once. */
+  readonly memoryBudgetBytes?: number
+  /** Bytes all concurrent deploys may stage on disk at once. */
+  readonly stagingBudgetBytes?: number
+  readonly maxFileBytes?: number
+}
+declare const Deploykit_base: Context.ServiceClass<
+  Deploykit,
+  "@deploykit/Deploykit",
+  {
+    capabilities: Provider.Capabilities
+    createApp: (name: string) => Effect.Effect<Provider.App, Provider.ProviderError>
+    getApp: (id: string) => Effect.Effect<Provider.App, Provider.ProviderError>
+    deleteApp: (id: string) => Effect.Effect<void, Provider.ProviderError>
+    getDeployment: (
+      appId: string,
+      deploymentId: string
+    ) => Effect.Effect<Provider.Deployment, Provider.ProviderError>
+    findAppByName: (
+      name: string
+    ) => Effect.Effect<
+      import("effect/Option").Option<Provider.App>,
+      Provider.ProviderError | Provider.UnsupportedError,
+      never
+    >
+    setAccess: (
+      id: string,
+      access: Provider.Access
+    ) => Effect.Effect<void, Provider.ProviderError | Provider.UnsupportedError, never>
+    activateDeployment: (
+      appId: string,
+      deploymentId: string
+    ) => Effect.Effect<
+      {
+        readonly appId: string
+        readonly deploymentId: string
+        readonly state: "unknown" | "pending" | "active"
+      },
+      Provider.ProviderError | Provider.UnsupportedError,
+      never
+    >
+    getActivation: (
+      appId: string,
+      deploymentId: string
+    ) => Effect.Effect<
+      {
+        readonly appId: string
+        readonly deploymentId: string
+        readonly state: "unknown" | "pending" | "active"
+      },
+      Provider.ProviderError | Provider.UnsupportedError,
+      never
+    >
+    reconcileDeployment: (
+      appId: string,
+      operationId: string
+    ) => Effect.Effect<
+      Provider.Reconciliation,
+      Provider.ProviderError | Provider.UnsupportedError,
+      never
+    >
+    listDeployments: (
+      appId: string,
+      options?: Provider.ListDeploymentsOptions | undefined
+    ) => Effect.Effect<
+      readonly Provider.Deployment[],
+      Provider.ProviderError | Provider.UnsupportedError,
+      never
+    >
+    deleteDeployment: (
+      appId: string,
+      deploymentId: string
+    ) => Effect.Effect<void, Provider.ProviderError | Provider.UnsupportedError, never>
+    rollback: (
+      appId: string,
+      deploymentId: string
+    ) => Effect.Effect<
+      {
+        readonly appId: string
+        readonly deploymentId: string
+        readonly state: "unknown" | "pending" | "active"
+      },
+      Provider.ProviderError | Provider.UnsupportedError,
+      never
+    >
+    deploy: (
+      appId: string,
+      artifact: Artifact.Artifact,
+      options?: DeployOptions
+    ) => Effect.Effect<
+      Provider.Deployment,
+      Provider.ProviderError | Provider.TransferError | Provider.UnsupportedError,
+      never
+    >
+    deployAndWait: (
+      appId: string,
+      artifact: Artifact.Artifact,
+      { wait, ...options }?: DeployAndWaitOptions
+    ) => Effect.Effect<
+      Provider.Deployment,
+      | Provider.ProviderError
+      | Provider.TransferError
+      | Provider.UnsupportedError
+      | import("./platform/errors.js").DeploymentTimeoutError
+      | DeploymentFailedError,
+      never
+    >
+    waitUntilReady: (
+      appId: string,
+      deploymentId: string,
+      options?: WaitOptions
+    ) => Effect.Effect<
+      Provider.Deployment,
+      Provider.ProviderError | import("./platform/errors.js").DeploymentTimeoutError,
+      never
+    >
+    deployDirectory: (
+      appId: string,
+      directory: string,
+      options?: DeployOptions
+    ) => Effect.Effect<
+      Provider.Deployment,
+      | import("./artifact/path.ts").InvalidArtifactPathError
+      | Provider.ProviderError
+      | Provider.TransferError
+      | import("effect/PlatformError").PlatformError
+      | Artifact.DuplicatePathError
+      | Provider.UnsupportedError,
+      never
+    >
+    /** `manifest` is decoded here, so it can come straight from JSON.parse or a queue. */
+    deployManifest: (
+      appId: string,
+      manifest: unknown,
+      source: FileSource,
+      options?: DeployOptions
+    ) => Effect.Effect<
+      Provider.Deployment,
+      | Provider.ProviderError
+      | Provider.TransferError
+      | Artifact.DuplicatePathError
+      | Provider.UnsupportedError,
+      never
+    >
+  }
+>
+export declare class Deploykit extends Deploykit_base {}
+/** Builds the shared service from a provider; adapters expose this through their own layers. */
+export declare const layer: (
+  limits?: Limits
+) => Layer.Layer<
+  Deploykit,
+  Provider.TransferLimitError,
+  FileSystem.FileSystem | Provider.DeploymentProvider
+>
+export {}
+```
+
+## provider/http.d.ts
+
+```ts
+import { Effect, Schema } from "effect"
+declare const TransportError_base: Schema.Class<
+  TransportError,
+  Schema.TaggedStruct<
+    "TransportError",
+    {
+      readonly message: Schema.String
+    }
+  >,
+  import("effect/Cause").YieldableError
+>
+export declare class TransportError extends TransportError_base {}
+/** Keep cancellation active through response consumption; cap remote response allocation. */
+export declare const fetchText: (
+  fetcher: typeof globalThis.fetch,
+  url: string,
+  init?: RequestInit
+) => Effect.Effect<
+  {
+    response: Response
+    text: string
+  },
+  TransportError,
+  never
+>
+/** Persist only structured provider codes and missing content hashes, never response text. */
+export declare const safeBody: (text: string) => string
+export declare const retryAfter: (header: string | null) => number | undefined
+export declare const responseCode: (text: string) => string | undefined
+export {}
+```
+
+## telemetry.d.ts
+
+```ts
+import { Context, Effect } from "effect"
+export interface Failure {
+  readonly tag: string
+  readonly operation?: string
+  readonly statusCode?: number
+  readonly code?: string
+  readonly requestId?: string
+  readonly outcome?: string
+  readonly recovery?: string
+}
+export interface OperationDetails {
+  readonly contentId?: string
+  readonly bytes?: number
+}
+export type Event =
+  | {
+      readonly kind: "deployment"
+      readonly provider: string
+      readonly id: string
+      readonly status: string
+      readonly url?: string
+    }
+  | {
+      readonly kind: "cache"
+      readonly provider: string
+      readonly totalContents: number
+      readonly missingContents: number
+      readonly missingBytes: number
+    }
+  | {
+      readonly kind: "progress"
+      readonly provider: string
+      readonly stage: "hashing" | "uploading" | "created"
+      readonly done?: number
+      readonly total?: number
+      readonly bytes?: number
+      readonly deploymentId?: string
+    }
+  | {
+      readonly kind: "retry.scheduled"
+      readonly attempt: number
+      readonly delayMs: number
+      readonly statusCode?: number
+    }
+  | {
+      readonly kind: "input"
+      readonly provider: string
+      readonly files: number
+      readonly bytes: number
+    }
+  | {
+      readonly kind: "operation.started"
+      readonly id: string
+      readonly provider: string
+      readonly operation: string
+      readonly parentId?: string
+      readonly details?: OperationDetails
+    }
+  | {
+      readonly kind: "operation.finished"
+      readonly id: string
+      readonly provider: string
+      readonly operation: string
+      readonly parentId?: string
+      readonly details?: OperationDetails
+      readonly durationMs: number
+      readonly outcome: "success" | "failure" | "interrupted"
+      readonly failure?: Failure
+    }
+export declare const Observer: Context.Reference<
+  ((event: Event) => Effect.Effect<void>) | undefined
+>
+/** Export only diagnostic fields, never messages, bodies, file paths or source references. */
+export declare const failure: (error: unknown) => Failure
+/** Observer failures cannot change the observed operation's result. */
+export declare const observe: <A, E, R>(
+  provider: string,
+  operation: string,
+  effect: Effect.Effect<A, E, R>,
+  details?: OperationDetails
+) => Effect.Effect<A, E, Exclude<R, import("effect/Tracer").ParentSpan>>
+/** Install an observer in the caller's Effect context to receive SDK events. */
+export declare const emit: (event: Event) => Effect.Effect<void, never, never>
+```
+
+## manifestBuilder.d.ts
+
+```ts
+import { Effect, FileSystem } from "effect"
+import * as Artifact from "./artifact/index.js"
+import { IntegrityError, SourceError, ValidationError } from "./provider/errors.js"
+export interface BuildOptions {
+  /** Assign replayable storage references, never credentials or signed URLs. */
+  readonly source: (path: string) => string
+  readonly concurrency?: number
+  readonly timeoutMs?: number
+}
+/** Hashes streams without collecting file contents; storage and snapshots remain caller-owned. */
+export declare const fromArtifact: (
+  artifact: Artifact.Artifact,
+  options: BuildOptions
+) => Effect.Effect<
+  {
+    version: 1
+    entries: {
+      fingerprints?: {
+        recipe: string
+        context: string
+        value: string
+      }[]
+      path: string & import("effect/Brand").Brand<"ArtifactPath">
+      byteLength: number
+      source: string
+      sha256: string
+    }[]
+  },
+  | ValidationError
+  | SourceError
+  | IntegrityError
+  | import("./provider/errors.js").TransferLimitError,
+  FileSystem.FileSystem
+>
+/** Reads every file under the directory, including dotfiles; it does not copy or freeze them. */
+export declare const fromDirectory: (
+  directory: string,
+  options: BuildOptions
+) => Effect.Effect<
+  {
+    version: 1
+    entries: {
+      fingerprints?: {
+        recipe: string
+        context: string
+        value: string
+      }[]
+      path: string & import("effect/Brand").Brand<"ArtifactPath">
+      byteLength: number
+      source: string
+      sha256: string
+    }[]
+  },
+  | import("./artifact/path.ts").InvalidArtifactPathError
+  | ValidationError
+  | SourceError
+  | IntegrityError
+  | import("./provider/errors.js").TransferLimitError
+  | import("effect/PlatformError").PlatformError
+  | Artifact.DuplicatePathError,
+  FileSystem.FileSystem
+>
+```

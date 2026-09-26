@@ -1,0 +1,318 @@
+---
+title: "@deploykit/cloudflare"
+description: "Complete generated public declarations for @deploykit/cloudflare."
+---
+
+This reference is generated from the built package. Start with the [guides](/docs) for working examples and the [API overview](/docs/reference) for task-oriented reference.
+
+## Import paths
+
+Only the import paths below are public. Supporting declaration modules describe the types reachable through those exports; their filenames are not additional public import paths.
+
+| Import                          | Declaration module |
+| ------------------------------- | ------------------ |
+| `@deploykit/cloudflare`         | `index.d.ts`       |
+| `@deploykit/cloudflare/control` | `control.d.ts`     |
+
+## index.d.ts
+
+```ts
+import { FileSystem, Layer } from "effect"
+import * as Deploykit from "@deploykit/core/deploykit"
+import * as Provider from "@deploykit/core/provider"
+import type { CloudflareClient } from "./services/client.js"
+import type { CloudflareHttpConfig } from "./services/http.js"
+/**
+ * The Cloudflare Pages adapter.
+ *
+ * FileSystem stays a requirement rather than being provided here: the adapter
+ * does not pick the caller's runtime, and only File entries ever reach it.
+ */
+export declare const cloudflareLayer: Layer.Layer<
+  Provider.DeploymentProvider,
+  import("effect/Config").ConfigError,
+  FileSystem.FileSystem
+>
+export declare const layerWith: (
+  client: CloudflareClient
+) => Layer.Layer<Provider.DeploymentProvider, never, FileSystem.FileSystem>
+/** `Deploykit` on Cloudflare Pages: the layer most Effect apps want. Requires a `FileSystem`. */
+export declare const layer: (
+  options: CloudflareHttpConfig & Deploykit.Limits
+) => Layer.Layer<Deploykit.Deploykit, Provider.TransferLimitError, FileSystem.FileSystem>
+/** `layer`, reading credentials from `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID`. */
+export declare const layerConfig: (
+  limits?: Deploykit.Limits
+) => Layer.Layer<
+  Deploykit.Deploykit,
+  import("effect/Config").ConfigError | Provider.TransferLimitError,
+  FileSystem.FileSystem
+>
+export * from "./services/status.js"
+export { CLOUDFLARE_DIGEST, pagesDigest } from "./services/digest.js"
+export { makeCloudflareClient } from "./services/http.js"
+export type { CloudflareHttpConfig } from "./services/http.js"
+export { CloudflareApiError } from "./services/client.js"
+export type { CloudflareClient } from "./services/client.js"
+export {
+  cloudflareClientFromConfig,
+  cloudflareControlLayer,
+  controlLayerWith,
+  makeCloudflareControl
+} from "./control.js"
+```
+
+## services/client.d.ts
+
+```ts
+import type { Effect, Scope } from "effect"
+import { Schema } from "effect"
+export declare const CLOUDFLARE_API = "https://api.cloudflare.com/client/v4"
+declare const CloudflareApiError_base: Schema.Class<
+  CloudflareApiError,
+  Schema.TaggedStruct<
+    "CloudflareApiError",
+    {
+      readonly message: Schema.String
+      readonly operation: Schema.String
+      readonly requestId: Schema.optional<Schema.String>
+      readonly deploymentId: Schema.optional<Schema.String>
+      readonly code: Schema.optional<Schema.String>
+      readonly statusCode: Schema.optional<Schema.Number>
+      readonly body: Schema.optional<Schema.String>
+      readonly retryAfterMs: Schema.optional<Schema.Number>
+      readonly transient: Schema.optional<Schema.Boolean>
+    }
+  >,
+  import("effect/Cause").YieldableError
+>
+export declare class CloudflareApiError extends CloudflareApiError_base {}
+export declare const isTransientFailure: (
+  errors: ReadonlyArray<{
+    readonly code?: number | undefined
+    readonly message: string
+  }>
+) => boolean
+/** The fields this adapter reads off a Pages project. */
+export declare const pagesProject: Schema.Struct<{
+  readonly id: Schema.String
+  readonly name: Schema.String
+  readonly production_branch: Schema.optional<Schema.String>
+  /** The deployment serving production right now. */
+  readonly canonical_deployment: Schema.optional<
+    Schema.NullOr<
+      Schema.Struct<{
+        readonly id: Schema.String
+      }>
+    >
+  >
+}>
+export type PagesProject = typeof pagesProject.Type
+export declare const pagesDeployment: Schema.Struct<{
+  readonly id: Schema.String
+  readonly url: Schema.optional<Schema.String>
+  readonly project_name: Schema.optional<Schema.String>
+  readonly latest_stage: Schema.Struct<{
+    readonly name: Schema.Literals<
+      readonly ["queued", "initialize", "clone_repo", "build", "deploy"]
+    >
+    readonly status: Schema.Literals<readonly ["idle", "active", "success", "failure", "canceled"]>
+  }>
+  readonly is_skipped: Schema.optional<Schema.Boolean>
+  readonly environment: Schema.optional<Schema.String>
+}>
+export type PagesDeployment = typeof pagesDeployment.Type
+/** One file as the asset upload endpoint wants it. */
+export interface AssetUpload {
+  /** The blake3 hash, which is also the key the manifest points at. */
+  readonly key: string
+  /** Base64 of the file's bytes. */
+  readonly value: string
+  readonly metadata: {
+    readonly contentType: string
+  }
+  readonly base64: true
+}
+/** Parts of a deployment that are not assets. */
+export interface DeploymentExtras {
+  readonly branch?: string
+  /** A serialised Workers upload form, from `workerBundle`. */
+  readonly workerBundle?: Blob
+  /** Which paths the Worker handles; without it, it handles everything. */
+  readonly routes?: unknown
+  readonly headers?: string
+  readonly redirects?: string
+}
+export interface CloudflareClient {
+  readonly previewBranch?: string
+  readonly createProject: (name: string) => Effect.Effect<PagesProject, CloudflareApiError>
+  readonly getProject: (name: string) => Effect.Effect<PagesProject, CloudflareApiError>
+  readonly deleteProject: (name: string) => Effect.Effect<void, CloudflareApiError>
+  readonly getDeployment: (
+    projectName: string,
+    deploymentId: string
+  ) => Effect.Effect<PagesDeployment, CloudflareApiError>
+  /** One page of a project's deployments, newest first. */
+  readonly listDeployments?: (
+    projectName: string,
+    options: {
+      readonly env?: "production" | "preview"
+      readonly perPage: number
+    }
+  ) => Effect.Effect<ReadonlyArray<PagesDeployment>, CloudflareApiError>
+  readonly deleteDeployment?: (
+    projectName: string,
+    deploymentId: string
+  ) => Effect.Effect<void, CloudflareApiError>
+  /** Point production back at an earlier successful production deployment. */
+  readonly rollbackDeployment?: (
+    projectName: string,
+    deploymentId: string
+  ) => Effect.Effect<PagesDeployment, CloudflareApiError>
+  /** A short-lived JWT scoped to one project's asset store. */
+  readonly uploadToken: (projectName: string) => Effect.Effect<string, CloudflareApiError>
+  /** Which of these hashes Cloudflare does not already hold. */
+  readonly checkMissing: (
+    jwt: string,
+    hashes: ReadonlyArray<string>
+  ) => Effect.Effect<ReadonlyArray<string>, CloudflareApiError>
+  readonly uploadAssetStream?: (
+    jwt: string,
+    byteLength: number,
+    open: Effect.Effect<ReadableStream<Uint8Array>, never, Scope.Scope>
+  ) => Effect.Effect<void, CloudflareApiError>
+  readonly uploadAssets: (
+    jwt: string,
+    payload: ReadonlyArray<AssetUpload>
+  ) => Effect.Effect<void, CloudflareApiError>
+  /** Keeps the uploaded hashes warm for the next deployment. */
+  readonly upsertHashes: (
+    jwt: string,
+    hashes: ReadonlyArray<string>
+  ) => Effect.Effect<void, CloudflareApiError>
+  readonly createDeployment: (
+    projectName: string,
+    manifest: Readonly<Record<string, string>>,
+    extras?: DeploymentExtras
+  ) => Effect.Effect<PagesDeployment, CloudflareApiError>
+}
+export {}
+```
+
+## services/http.d.ts
+
+```ts
+import * as Provider from "@deploykit/core/provider"
+import { type AssetUpload, type CloudflareClient } from "./client.js"
+export interface CloudflareHttpConfig {
+  readonly apiToken: string
+  readonly accountId: string
+  readonly baseUrl?: string
+  readonly fetch?: typeof globalThis.fetch
+  readonly retry?: Provider.RetryOptions
+  readonly timeoutMs?: number
+  readonly previewBranch?: string
+  /** Shares request rate with other processes using the same token. */
+  readonly gate?: Provider.RequestGate
+}
+export declare const makeCloudflareClient: (config: CloudflareHttpConfig) => CloudflareClient
+export type { AssetUpload }
+```
+
+## services/status.d.ts
+
+```ts
+/**
+ * Mapping Cloudflare Pages' deployment state onto the portable one.
+ *
+ * This is where the second provider earns its keep. Vercel reports a single
+ * `readyState`; Cloudflare reports a stage AND a status, and the meaning is in
+ * the pair. The trap is `build/success`, which is not deployed: it means the
+ * build finished and the deploy stage has not run. A mapping that keyed off
+ * status alone would report a site live while it was still deploying.
+ */
+import { Schema } from "effect"
+import * as Provider from "@deploykit/core/provider"
+/** The build pipeline, in order. Only the last one succeeding means live. */
+export declare const pagesStage: Schema.Literals<
+  readonly ["queued", "initialize", "clone_repo", "build", "deploy"]
+>
+export type PagesStage = typeof pagesStage.Type
+export declare const pagesStatus: Schema.Literals<
+  readonly ["idle", "active", "success", "failure", "canceled"]
+>
+export type PagesStatus = typeof pagesStatus.Type
+export declare const pagesLatestStage: Schema.Struct<{
+  readonly name: Schema.Literals<readonly ["queued", "initialize", "clone_repo", "build", "deploy"]>
+  readonly status: Schema.Literals<readonly ["idle", "active", "success", "failure", "canceled"]>
+}>
+/**
+ * Both dimensions decide the answer.
+ *
+ * A failure or cancellation at any stage is terminal. Otherwise the stage says
+ * how far along we are, and only `deploy/success` is actually serving.
+ */
+export declare const mapLatestStage: (
+  stage: PagesStage,
+  status: PagesStatus
+) => Provider.DeploymentStatus
+/**
+ * A Pages deployment as the portable model.
+ *
+ * `appId` is the project NAME, because that is how Cloudflare addresses a
+ * project everywhere: there is no opaque id you can use instead.
+ *
+ * A skipped deployment reports as failed. It did not deploy, and no caller so
+ * far would act differently on the distinction, so it rides in `reason`
+ * rather than earning a fifth status.
+ */
+export declare const toDeployment: (
+  deployment: {
+    readonly id: string
+    readonly url?: string | undefined
+    readonly project_name?: string | undefined
+    readonly latest_stage: {
+      readonly name: PagesStage
+      readonly status: PagesStatus
+    }
+    readonly is_skipped?: boolean | undefined
+  },
+  fallbackProjectName: string
+) => Provider.Deployment
+```
+
+## services/digest.d.ts
+
+```ts
+/** The key a caller uses to pre-supply this digest on a deferred entry. */
+export declare const CLOUDFLARE_DIGEST = "blake3-b64ext"
+/** The extension without its dot, as wrangler takes it. */
+export declare const extensionOf: (path: string) => string
+export declare const pagesDigest: (content: Uint8Array, path: string) => string
+```
+
+## control.d.ts
+
+```ts
+import { Config, Effect, Layer } from "effect"
+import * as Provider from "@deploykit/core/provider"
+import type { CloudflareClient } from "./services/client.js"
+export declare const makeCloudflareControl: (cloudflare: CloudflareClient) => Provider.ControlPlane
+export declare const cloudflareClientFromConfig: Effect.Effect<
+  CloudflareClient,
+  Config.ConfigError,
+  never
+>
+export declare const cloudflareControlLayer: Layer.Layer<
+  Provider.DeploymentControl,
+  Config.ConfigError,
+  never
+>
+export declare const controlLayerWith: (
+  client: CloudflareClient
+) => Layer.Layer<Provider.DeploymentControl, never, never>
+export { makeCloudflareClient } from "./services/http.js"
+export type { CloudflareHttpConfig } from "./services/http.js"
+export { CloudflareApiError } from "./services/client.js"
+export type { CloudflareClient } from "./services/client.js"
+```

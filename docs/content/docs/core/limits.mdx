@@ -1,0 +1,87 @@
+---
+title: Limits
+description: How big a deploy can be, and how to control memory and disk use.
+---
+
+import { Tab, Tabs } from "fumadocs-ui/components/tabs"
+
+## Size limits
+
+| Limit            | Value                              |
+| ---------------- | ---------------------------------- |
+| Files per deploy | 20,000                             |
+| Largest file     | 100,000,000 bytes (`maxFileBytes`) |
+| Manifest JSON    | 16 MiB                             |
+| Host response    | 2 MiB                              |
+
+Hosts add their own: see [Cloudflare's limits](/docs/cloudflare#limits). Your account plan may have
+more. Going over a limit fails with `TransferLimitError` before anything is uploaded.
+
+## Timeouts
+
+| Operation                         | Default                          |
+| --------------------------------- | -------------------------------- |
+| Each HTTP operation, with retries | 30 s (`timeoutMs` on the client) |
+| Reading a file from its source    | 30 s                             |
+| `waitUntilServing`                | 60 s total, 30 s per request     |
+| `Platform` `waitUntilReady`       | 5 minutes                        |
+
+There's no overall deadline on a deploy. Add one with an `AbortSignal` or `Effect.timeout`.
+
+## Memory and disk
+
+Files up to 8 MiB are uploaded from memory. Bigger ones are copied to a temporary file, checked,
+and uploaded from there, so a retry doesn't need to re-read the source. Temporary files are
+deleted when the deploy ends, however it ends. If the process is killed, some may be left behind.
+
+You need a writable temp directory with room for the large files in flight.
+
+Two budgets cap how much deploykit uses at once, across **every** deploy through one client or
+layer:
+
+| Setting              | Default | Caps                                     |
+| -------------------- | ------- | ---------------------------------------- |
+| `memoryBudgetBytes`  | 256 MiB | Memory reserved for files being uploaded |
+| `stagingBudgetBytes` | 256 MiB | Disk used by temporary files             |
+| `maxFileBytes`       | 100 MB  | Largest single file                      |
+
+A deploy that needs more waits for others to release their share, rather than failing.
+
+<Tabs groupId="api" items={["Effect", "Promise"]} persist>
+<Tab value="Promise">
+
+```ts title="src/deploykit.ts"
+import { createClient } from "@deploykit/node/vercel"
+
+export const deploykit = createClient({
+  token: process.env.VERCEL_TOKEN!,
+  memoryBudgetBytes: 512 * 1024 * 1024,
+  stagingBudgetBytes: 1024 * 1024 * 1024,
+  maxFileBytes: 100_000_000
+})
+```
+
+</Tab>
+<Tab value="Effect">
+
+```ts title="src/deploykit.ts"
+import * as Vercel from "@deploykit/vercel"
+
+// With credentials from the environment:
+export const DeploykitLive = Vercel.layerConfig({
+  memoryBudgetBytes: 512 * 1024 * 1024,
+  stagingBudgetBytes: 1024 * 1024 * 1024
+})
+
+// Or with explicit options:
+Vercel.layer({ token, memoryBudgetBytes: 512 * 1024 * 1024 })
+```
+
+</Tab>
+</Tabs>
+
+A file held in memory reserves about 16 times its size plus 8 MiB while it's hashed and uploaded,
+so a 256 MiB budget handles a handful of large in-memory files at once. Staged files reserve 1 MiB.
+
+These only cover deploykit's own buffers, not your whole process. Your file sources, the runtime
+and garbage collection use memory on top.
