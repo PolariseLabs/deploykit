@@ -18,6 +18,10 @@
     "./cloudflare": {
       "types": "./dist/cloudflare.d.ts",
       "default": "./dist/cloudflare.js"
+    },
+    "./test": {
+      "types": "./dist/test.d.ts",
+      "default": "./dist/test.js"
     }
   },
   "files": [
@@ -34,7 +38,8 @@
     "@deploykit/cloudflare": "workspace:*",
     "@effect/platform-node": "4.0.0-rc.112",
     "@effect/platform-node-shared": "4.0.0-rc.112",
-    "effect": "4.0.0-rc.112"
+    "effect": "4.0.0-rc.112",
+    "@deploykit/test": "workspace:*"
   },
   "engines": {
     "node": ">=22.19.0"

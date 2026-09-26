@@ -1,6 +1,6 @@
 import { Context, Effect, Layer, Option, Ref } from "effect"
 import type { Artifact } from "@deploykit/core"
-import { Provider } from "@deploykit/core"
+import { Deploykit, Provider } from "@deploykit/core"
 
 /** Which calls fail, so error paths are testable without breaking anything real. */
 export interface TestProviderConfig {
@@ -378,3 +378,10 @@ export const layer = (config: TestProviderConfig = {}) =>
       return test.provider
     })
   ).pipe(Layer.provideMerge(Layer.effect(TestProvider, make(config))))
+
+/**
+ * `Deploykit` over the in-memory provider, for testing code that deploys.
+ * Also provides `TestProvider`, to assert on what was deployed. Needs a `FileSystem`.
+ */
+export const deploykitLayer = (config: TestProviderConfig & Deploykit.Limits = {}) =>
+  Deploykit.layer(config).pipe(Layer.provideMerge(layer(config)))
