@@ -77,10 +77,11 @@ or Pages root assets. Pages supports `_worker.js` as an ESM entry module; deploy
 does not compile a `functions/` directory or resolve worker imports.
 
 `deploy()` returns once creation is known. `getDeployment(appId, id)` observes once.
-Readiness is available through `(yield* Platform.Platform).deployments.waitUntilReady(appId, id)`.
-Provide `Platform.layer` with a `DeploymentProvider` and a caller-owned `TenantAppStore`
-to use that service. Direct provider users can poll `getDeployment` with an Effect
-schedule and timeout, as in the example below.
+`deployAndWait(appId, artifact)` deploys and polls until the deployment is live, failing
+with `DeploymentFailedError` if the provider reports a failed build; `waitUntilReady`
+polls an existing deployment. Both exist on `Deploykit` and the Promise client
+(`{ wait: { timeoutMs, intervalMs } }` there, an Effect schedule on `Deploykit`).
+`Platform.layer` adds tenant-to-app mapping on top, with a caller-owned `TenantAppStore`.
 
 `Platform.waitUntilServing(url, { timeoutMs: 60_000 })` is a separate optional helper.
 It accepts 2xx by default, avoids redirects and cancels response bodies. Each request
@@ -226,7 +227,10 @@ it does not become an ambiguous create outcome or trigger automatic retries.
 Provider response diagnostics retain only allowlisted codes and content hashes.
 
 Read and content-addressed upload retries default to four attempts with backoff and
-`Retry-After`. Set `retry: { attempts: 1 }` on either HTTP client to disable them.
+`Retry-After`. A 429 asking for 10 seconds or less does not use up an attempt: it is
+retried until the request deadline, because the provider has said it did nothing and when
+to return. Longer 429s go back to the caller with `retryAfterMs`. Set
+`retry: { attempts: 1 }` on either HTTP client to disable all retries.
 Vercel also honors `X-RateLimit-Reset` on HTTP 429 when `Retry-After` is absent,
 including reads and uploads without a throttle preset. The request deadline still applies.
 Create and activation writes are single-attempt, including throttling responses.
@@ -239,6 +243,14 @@ Persist operation intent before calling, and persist returned deployment IDs. Pr
 not a receipt and interruption cannot guarantee a receipt reaches the caller.
 
 ## Capabilities and activation
+
+`Provider.recoveryOf(error)` (also exported by `@deploykit/node`) turns any of these into
+one of `retry`, `reconcile`, `wait`, `fix-input` or `unsupported`.
+
+Provider rate limits are per token, so processes sharing one token can only stay under
+them together. Pass a `gate` to either HTTP client (or `createClient`): it is asked
+before every request and told about every 429. Back it with Redis or similar; it fails
+open if the store is down. Without a gate, each process paces only itself.
 
 | Behaviour                      | Vercel                                                                   | Pages                                                                                |
 | ------------------------------ | ------------------------------------------------------------------------ | ------------------------------------------------------------------------------------ |
@@ -254,6 +266,7 @@ and observe `getActivation`. Activation requires a ready production deployment b
 to the app. It does not rebuild a preview. Request acceptance returns `pending`; a separate
 observation can establish `active`. Other routing states remain `unknown`.
 
+| List, rollback, delete         | Rollback promotes an older ready production deployment                   | Rollback uses the Pages rollback endpoint                                            |
 Reconciliation returns `Recovered` only for one matching deployment in a complete search
 window; zero/multiple matches and incomplete windows return `Unknown`. There is no
 exactly-once, absence or resume promise. Activation may race another caller or alter
@@ -274,6 +287,36 @@ bun install --frozen-lockfile
 bun run typecheck
 bun run test
 bun run lint
+## Deployment history
+
+`listDeployments(appId, { target: "production" })` returns one page, newest first.
+`rollback(appId, deploymentId)` points production back at an earlier successful production
+deployment without rebuilding. `deleteDeployment` refuses the deployment serving production
+on both providers. These are built from the published API docs and tested against fakes;
+run `scripts/qualify.ts` (below) before relying on them.
+
+## Testing code that deploys
+
+`TestProvider.deploykitLayer()` from `@deploykit/test` gives code under test a `Deploykit`
+over an in-memory provider, plus the `TestProvider` handle to inspect what was deployed.
+Without Effect, `createTestClient()` from `@deploykit/node/test` is the same thing behind
+Promises, with `snapshot()` and `artifactFor(deploymentId)`. Nothing leaves the process;
+`failOn`, `neverFinish` and `lostCreateResponse` script the error paths.
+
+## Runtimes without a filesystem
+
+`@deploykit/node/edge` has `createVercelClient`, `createCloudflareClient` and in-memory
+`artifactFromFiles` for runtimes such as Cloudflare Workers with `nodejs_compat` (it needs
+`node:crypto` and `node:buffer`, nothing else from Node; `check:control` enforces that).
+Deploy from bytes, text or manifests with fetched sources. Directories are unavailable and
+files are capped at 8 MiB, since larger ones are staged on disk.
+
+## Custom domains
+
+Out of scope. Per-tenant domains (add, DNS records, verification, removal) are a separate
+lifecycle that tools such as [Domain SDK](https://www.domain-sdk.dev/) already cover across
+providers. Pass them deploykit's `app.id`: it is the Vercel project ID or Pages project name.
+
 bun run format:check
 bun run check:control
 bun run check:packages
@@ -283,7 +326,10 @@ bun run benchmark
 CI runs local checks without provider credentials. Live smoke tooling requires explicit
 isolated-account authorization plus `DEPLOYKIT_ISOLATED=1` and an explicit `CLEANUP=1`
 (delete) or `CLEANUP=0` (keep for inspection). It creates a
-`deploykit-smoke-*` project. Existing credentials alone are not authorization. New
+`deploykit-smoke-*` project. `bun scripts/qualify.ts` (same flags, plus `PROVIDER`)
+checks list, rollback and delete against a real `deploykit-qualify-*` project; add
+`ACCESS_PROBE=1` for password protection and `RATE_PROBE=1` for a bounded burst of reads
+that meets real 429s. Existing credentials alone are not authorization. New
 activation, preview, cache, function and access claims must be qualified before release.
 No package publishing is automated.
 
