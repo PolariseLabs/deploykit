@@ -1,16 +1,12 @@
-import { fromPromiseGate } from "@deploykit/core/provider"
-import { layer } from "@deploykit/vercel"
-import type { DeployRequestOptions, UploadDefaults, VercelHttpConfig } from "@deploykit/vercel"
+import { Layer } from "effect"
+import { NodeFileSystem } from "@effect/platform-node"
 import { makeClient } from "./client.js"
-import type { ClientOptions, GateOption } from "./client.js"
+import { vercelLayer } from "./layers.js"
+import type { VercelDeployExtras, VercelOptions } from "./layers.js"
 
-/** Upload tuning set here applies to every deploy; per-deploy options override it. */
-export type VercelOptions = Omit<VercelHttpConfig, "gate"> &
-  GateOption &
-  ClientOptions &
-  UploadDefaults
-export const createClient = ({ gate, ...options }: VercelOptions) =>
-  makeClient<Pick<DeployRequestOptions, "uploadRounds" | "uploadConcurrency" | "uploadOrder">>(
-    layer({ ...options, ...(gate === undefined ? {} : { gate: fromPromiseGate(gate) }) }),
+export type { VercelOptions } from "./layers.js"
+export const createClient = (options: VercelOptions) =>
+  makeClient<VercelDeployExtras>(
+    vercelLayer(options).pipe(Layer.provide(NodeFileSystem.layer)),
     options
   )

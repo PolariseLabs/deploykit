@@ -22,6 +22,10 @@
     "./test": {
       "types": "./dist/test.d.ts",
       "default": "./dist/test.js"
+    },
+    "./edge": {
+      "types": "./dist/edge.d.ts",
+      "default": "./dist/edge.js"
     }
   },
   "files": [

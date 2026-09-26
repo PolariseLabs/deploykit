@@ -1,4 +1,5 @@
 import { Effect, Layer } from "effect"
+import { NodeFileSystem } from "@effect/platform-node"
 import { Deploykit, Provider } from "@deploykit/core"
 import { make } from "@deploykit/test"
 import type { TestProviderConfig } from "@deploykit/test"
@@ -17,7 +18,8 @@ export const createTestClient = (options: TestClientOptions = {}) => {
   const test = Effect.runSync(make(options))
   const client = makeClient(
     Deploykit.layer(options).pipe(
-      Layer.provide(Layer.succeed(Provider.DeploymentProvider, test.provider))
+      Layer.provide(Layer.succeed(Provider.DeploymentProvider, test.provider)),
+      Layer.provide(NodeFileSystem.layer)
     ),
     options
   )

@@ -39,6 +39,36 @@ const program = Effect.gen(function* () {
       `${provider}: ${Object.keys(result.metafile.inputs).length} resolved modules, ${result.outputFiles[0]!.contents.length} bytes; no external imports or transfer modules`
     )
   }
+
+  // Workers-style runtimes: nodejs_compat supplies these two, nothing else from Node.
+  const allowed = ["node:crypto", "node:buffer"]
+  const edge = yield* Effect.tryPromise(() =>
+    build({
+      entryPoints: ["packages/node/dist/edge.js"],
+      bundle: true,
+      platform: "browser",
+      format: "esm",
+      write: false,
+      metafile: true,
+      treeShaking: true,
+      external: allowed,
+      logLevel: "silent"
+    })
+  )
+  const nodeOnly = Object.keys(edge.metafile.inputs).filter(path =>
+    /@effect\/platform-node/.test(path)
+  )
+  const imports = Object.values(edge.metafile.outputs)
+    .flatMap(output => output.imports)
+    .filter(item => item.external && !allowed.includes(item.path))
+  if (nodeOnly.length > 0 || imports.length > 0 || edge.warnings.length > 0) {
+    return yield* new BundleError({
+      message: `Unsafe edge bundle: ${JSON.stringify({ nodeOnly, imports, warnings: edge.warnings })}`
+    })
+  }
+  console.log(
+    `edge: ${Object.keys(edge.metafile.inputs).length} resolved modules, ${edge.outputFiles[0]!.contents.length} bytes; only ${allowed.join(" and ")} from Node`
+  )
 })
 
 await Effect.runPromise(program)

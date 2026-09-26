@@ -1,6 +1,5 @@
-import type { Context, FileSystem } from "effect"
-import { Effect, Layer, ManagedRuntime, Option, Schedule } from "effect"
-import { NodeFileSystem } from "@effect/platform-node"
+import type { Context, Layer } from "effect"
+import { Effect, ManagedRuntime, Option, Schedule } from "effect"
 import type { Artifact, Provider } from "@deploykit/core"
 import { Deploykit, Manifest, Source } from "@deploykit/core"
 import * as Telemetry from "@deploykit/core/telemetry"
@@ -40,10 +39,11 @@ const toWait = ({
 
 /** A Promise face over one `Deploykit` layer. Each method runs the matching Effect method. */
 export const makeClient = <D extends object = object>(
-  layer: Layer.Layer<Deploykit.Deploykit, unknown, FileSystem.FileSystem>,
+  /** Fully provided, filesystem included: the runtime entry points choose it. */
+  layer: Layer.Layer<Deploykit.Deploykit, unknown>,
   config: ClientOptions
 ) => {
-  const runtime = ManagedRuntime.make(layer.pipe(Layer.provide(NodeFileSystem.layer)))
+  const runtime = ManagedRuntime.make(layer)
   const lifetime = new AbortController()
   const pending = new Set<Promise<unknown>>()
   let closing: Promise<void> | undefined

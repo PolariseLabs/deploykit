@@ -1,12 +1,9 @@
-import { fromPromiseGate } from "@deploykit/core/provider"
-import { layer } from "@deploykit/cloudflare"
-import type { CloudflareHttpConfig } from "@deploykit/cloudflare"
+import { Layer } from "effect"
+import { NodeFileSystem } from "@effect/platform-node"
 import { makeClient } from "./client.js"
-import type { ClientOptions, GateOption } from "./client.js"
+import { cloudflareLayer } from "./layers.js"
+import type { CloudflareOptions } from "./layers.js"
 
-export type CloudflareOptions = Omit<CloudflareHttpConfig, "gate"> & GateOption & ClientOptions
-export const createClient = ({ gate, ...options }: CloudflareOptions) =>
-  makeClient(
-    layer({ ...options, ...(gate === undefined ? {} : { gate: fromPromiseGate(gate) }) }),
-    options
-  )
+export type { CloudflareOptions } from "./layers.js"
+export const createClient = (options: CloudflareOptions) =>
+  makeClient(cloudflareLayer(options).pipe(Layer.provide(NodeFileSystem.layer)), options)
